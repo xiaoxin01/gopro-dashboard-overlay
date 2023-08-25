@@ -31,18 +31,25 @@
     </composite>
 
     <composite x="832" y="970" name="power">
-        <component type="zone-bar" width="400" height="75" metric="power" max="400" z1="130" z2="160" z3="200" z0-rgb="67, 235, 52,200" z1-rgb="67,235,52,200" z2-rgb="240,232,19,200" z3-rgb="207,19,2,200" />
-        <component type="icon" x="140" y="10" file="power.png" size="64"/>
+        <component type="zone-bar" width="400" height="75" metric="power" max="400" z1="120" z2="160" z3="200" z0-rgb="67, 235, 52,200" z1-rgb="67,235,52,200" z2-rgb="240,232,19,200" z3-rgb="207,19,2,200" />
+        <component type="icon" x="20" y="10" file="power.png" size="64"/>
         <!-- <component type="text" x="200" y="10" size="16">W</component> -->
-        <component type="metric" x="200" y="10" metric="power" dp="0" size="48" />
+        <component type="metric" x="80" y="10" metric="power" dp="0" size="48" />
+        <component type="metric" x="230" y="16" metric="power" format="58kg" size="32" />
     </composite>
 
     <component type="chart" name="power_chart" metric="power" units="watts" x="1250" y="980"/>
 
-    <composite x="1900" y="980" name="temperature">
-        <component type="metric_unit" x="-70" y="0" size="16" align="right" metric="temp" units="temp">TEMP({:~C})</component>
-        <component type="icon" x="-64" y="0" file="thermometer.png" size="64"/>
-        <component type="metric" x="-70" y="18" dp="0" size="32" align="right" metric="temp" units="temp"/>
+    <composite x="1600" y="980" name="distance">
+        <component type="text" x="70" y="0" size="16">KM</component>
+        <component type="icon" x="0" y="0" file="ruler.png" size="64"/>
+        <component type="metric" x="70" y="18" metric="odo" units="km" dp="1" size="32" />
+    </composite>
+
+    <composite x="1750" y="980" name="temperature">
+        <component type="metric_unit" x="70" y="0" size="16" metric="temp" units="temp">TEMP({:~C})</component>
+        <component type="icon" x="0" y="0" file="thermometer.png" size="64"/>
+        <component type="metric" x="70" y="18" dp="0" size="32" metric="temp" units="temp"/>
     </composite>
 
 

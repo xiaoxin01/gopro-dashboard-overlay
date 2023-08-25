@@ -25,7 +25,12 @@ def metric_value(entry, accessor, converter, formatter, default="-"):
         v = accessor(entry())
         if v is not None:
             v = converter(v)
-            return formatter(v)
+            if isinstance(formatter, str) and formatter.endswith("kg"):
+                number = int(formatter[:-2])
+                print("NUMBER", number)    
+                return lambda q: str(round(q.m / number, 1)) + "w/kg"
+            else:
+                return formatter(v)
         return default
 
     return value
