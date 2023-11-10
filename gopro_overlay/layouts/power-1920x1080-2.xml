@@ -1,0 +1,65 @@
+<layout>
+
+    <translate x="950" y="820" name="speed_gauge">
+        <component type="cairo-gauge-round-annotated" metric="speed" units="kph" size="160" start="90" max="70"/>
+        <translate x="75" y="75">
+            <component type="metric" metric="speed" units="kph" size="60" dp="0" rgb="255,255,255,160" outline="0,0,0,160"/>
+        </translate>
+    </translate>
+
+
+    <composite x="458" y="1000" name="altitude">
+        <component type="metric_unit" x="70" y="0" metric="alt" units="alt" size="16">ALT({:~C})</component>
+        <component type="icon" x="0" y="0" file="mountain.png" size="64"/>
+        <component type="metric" x="70" y="18" metric="alt" units="alt" dp="1" size="32" />
+    </composite>
+
+    <composite x="1250" y="1000" name="gradient">
+        <component type="text" x="70" y="0" size="16">SLOPE(%)</component>
+        <component type="icon" x="0" y="0" file="slope-triangle.png" size="64"/>
+        <component type="metric" x="70" y="18" metric="gradient" dp="1" size="32" />
+    </composite>
+
+    <composite x="1450" y="1000" name="cadence">
+        <component type="text" x="70" y="0" size="16">RPM</component>
+        <component type="icon" x="0" y="0" file="gauge.png" size="64"/>
+        <component type="metric" x="70" y="18" metric="cadence" dp="0" size="32" />
+    </composite>
+
+    <composite x="640" y="990" name="hr">
+        <component type="zone-bar" width="150" height="75" metric="hr" min="120" max="190" z1="140" z2="155" z3="170" z0-rgb="67, 235, 52,200" z1-rgb="67,235,52,200" z2-rgb="240,232,19,200" z3-rgb="207,19,2,200" />
+        <component type="text" x="80" y="10" size="16">BPM</component>
+        <component type="icon" x="10" y="10" file="heartbeat.png" size="64"/>
+        <component type="metric" x="80" y="28" metric="hr" dp="0" size="32" />
+    </composite>
+
+    <composite x="832" y="990" name="power">
+        <component type="zone-bar" width="400" height="75" metric="power" max="400" z1="120" z2="160" z3="200" z0-rgb="67, 235, 52,200" z1-rgb="67,235,52,200" z2-rgb="240,232,19,200" z3-rgb="207,19,2,200" />
+        <component type="icon" x="20" y="10" file="power.png" size="64"/>
+        <!-- <component type="text" x="200" y="10" size="16">W</component> -->
+        <component type="metric" x="80" y="10" metric="power" dp="0" size="48" />
+        <component type="metric" x="230" y="16" metric="power" format="58kg" size="32" />
+    </composite>
+
+    <component type="chart" name="power_chart" metric="power" units="watts" x="16" y="1000"/>
+
+    <composite x="1600" y="1000" name="distance">
+        <component type="text" x="70" y="0" size="16">KM</component>
+        <component type="icon" x="0" y="0" file="ruler.png" size="64"/>
+        <component type="metric" x="70" y="18" metric="odo" units="km" dp="1" size="32" />
+    </composite>
+
+    <composite x="1750" y="1000" name="temperature">
+        <component type="metric_unit" x="70" y="0" size="16" metric="temp" units="temp">TEMP({:~C})</component>
+        <component type="icon" x="0" y="0" file="thermometer.png" size="64"/>
+        <component type="metric" x="70" y="18" dp="0" size="32" metric="temp" units="temp"/>
+    </composite>
+
+
+    <translate x="1550" y="700">
+        <component type="cairo_circuit_map" size="300"/>
+    </translate>
+
+
+    <!-- <component type="moving_map" name="moving_map" rotate="False" x="1644" y="10" size="256" zoom="16" corner_radius="35"/> -->
+</layout>

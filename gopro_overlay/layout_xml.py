@@ -301,6 +301,9 @@ def quantity_formatter_from(element) -> Callable[[pint.Quantity], str]:
 
     if format_string:
         try:
+            # if format_string end with kg, then get value before kg and parse it to int
+            if format_string.endswith("kg"):
+                return lambda q: "{:.1f}".format(q.m / int(format_string[:-2])) + " w/kg"
             return lambda q: format(q.m, format_string)
         except ValueError:
             raise ValueError(f"Unable to format value with format string {format_string}")

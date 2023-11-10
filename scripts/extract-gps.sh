@@ -15,10 +15,10 @@ do
   filename=$(basename "$file")
 
   # 目标文件路径
-  destfile="$dest/$filename"
+  destfile="$dest/$filename".gpx
 
   # 执行另一个脚本
   # ./another_script.sh "$file"
-  bin/gopro-dashboard.py --font "Andale Mono" --profile overlay-mac --layout-xml gopro_overlay/layouts/power-1920x1080-2.xml --fit "$fit" "$file" "$destfile"
+  bin/gopro-to-gpx.py "$file" "$destfile" --only-locked
   
 done

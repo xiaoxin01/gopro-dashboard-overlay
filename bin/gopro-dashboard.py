@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
-import datetime
 import sys
+sys.path.insert(0, '')
+import datetime
 from importlib import metadata
 from importlib.metadata import PackageNotFoundError
 from pathlib import Path
