@@ -61,5 +61,5 @@
     </translate>
 
 
-    <!-- <component type="moving_map" name="moving_map" rotate="False" x="1644" y="10" size="256" zoom="16" corner_radius="35"/> -->
+    <component type="moving_map" name="moving_map" rotate="False" x="1644" y="10" size="256" zoom="16" corner_radius="35"/>
 </layout>
