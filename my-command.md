@@ -1,10 +1,10 @@
 # batch
 
-bash trans-one.sh /Volumes/gopro/DCIM/20250420-银屏山/GX010303.MP4 /Volumes/udisk/cycling/20250420-银屏山 ~/Downloads/银屏山巴黎鲁贝-14.gpx
+bash trans-one.sh /Volumes/gopro/DCIM/20250420-银屏山/GX010302.MP4 /Volumes/ssd/cycling/20250420-银屏山 ~/Downloads/银屏山巴黎鲁贝-14.gpx
 
-bash trans-one.sh /Volumes/gopro/DCIM/20250420-银屏山/GX010303-cat.MP4 /Volumes/udisk/cycling/20250420-银屏山 ~/Downloads/银屏山巴黎鲁贝-14.gpx
+bash trans-one.sh /Volumes/gopro/DCIM/20250525-银屏山土路越野/GX010360.MP4 /Volumes/ssd/cycling/20250525-银屏山土路越野 ~/Downloads/霍山到龙井峡.gpx
 
-bash trans.sh /Volumes/gopro/DCIM/20250322-万佛湖万佛山 /Volumes/udisk/cycling/20250322-万佛湖万佛山 ~/Downloads/万佛湖万佛山.fit
+bash trans.sh /Volumes/gopro/DCIM/20260509-龙井峡 /Volumes/ssd/cycling/20260509-龙井峡 ~/Downloads/霍山到龙井峡.gpx
 
 # 修改 gpx 文件时间偏移（秒）
 
@@ -23,7 +23,7 @@ bin/gopro-to-gpx.py /Volumes/Untitled/DCIM/20231104-庐南五连爬/GX010181.MP4
 
 ## 批量提取
 
-bash scripts/extract-gps.sh /Volumes/gopro/DCIM/20250420-银屏山 /Volumes/gopro/DCIM/20250420-银屏山
+bash scripts/extract-gps.sh /Volumes/gopro/DCIM/20260509-龙井峡 /Volumes/gopro/DCIM/20260509-龙井峡
 
 # 获得两个 gpx 之间的秒差
 
@@ -31,11 +31,11 @@ python bin/find-time.py tmp/_4_.gpx /Volumes/Untitled/DCIM/20231104-庐南五连
 
 ## 批量获取两个 gpx 之间的秒差
 
-bash scripts/compare-gps-time.sh ~/Downloads/银屏山巴黎鲁贝.gpx /Volumes/gopro/DCIM/20250420-银屏山
+bash scripts/compare-gps-time.sh ~/Downloads/霍山到龙井峡.gpx /Volumes/gopro/DCIM/20260509-龙井峡
 
 # cat
 
-bin/gopro-cut.py /Volumes/gopro/DCIM/20250420-银屏山/GX010303.MP4 --start 00:02:11.000000 --end 00:02:21.000000 /Volumes/gopro/DCIM/20250420-银屏山/GX010303-cat.MP4
+bin/gopro-cut.py /Volumes/ssd/cycling/20250420-银屏山/GX010302.MP4 --start 00:00:26.000000 --end 00:22:21.000000 /Volumes/ssd/cycling/20250420-银屏山/GX010302.MP4-cat.MP4
 
 # test
 
