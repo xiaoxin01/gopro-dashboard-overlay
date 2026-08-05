@@ -17,4 +17,4 @@ destfile="$dest/$filename"
 
 # 执行另一个脚本
 # ./another_script.sh "$file"
-bin/gopro-dashboard.py --font "Andale Mono" --profile overlay-mac --layout-xml gopro_overlay/layouts/power-1920x1080-2.xml --fit "$fit" "$file" "$destfile"
+bin/gopro-dashboard.py --font "Andale Mono" --profile overlay-mac --layout-xml gopro_overlay/layouts/power-1920x1080-2.xml --use-gpx-only --gpx "$fit" --video-time-end file-modified "$file" "$destfile"
