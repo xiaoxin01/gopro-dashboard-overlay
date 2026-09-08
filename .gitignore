@@ -1,3 +1,5 @@
+.codegraph/
+
 venv/
 venv-pypy/
 build/
