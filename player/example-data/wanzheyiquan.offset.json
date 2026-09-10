@@ -1,0 +1,110 @@
+{
+  "version": 1,
+  "offset_s": 48.968,
+  "data_start_utc": "2026-07-24T22:20:22+00:00",
+  "first_video_start_utc": "2026-07-24T22:20:58Z",
+  "first_video": "GX010437.MP4",
+  "combined_duration_s": 16603.754,
+  "total_source_duration_s": 16603.754,
+  "segments": [
+    {
+      "video": "GX010437.MP4",
+      "session": "0437",
+      "video_start_s": 0.0,
+      "duration_s": 2114.112,
+      "start_utc": "2026-07-24T22:20:58Z"
+    },
+    {
+      "video": "GX020437.MP4",
+      "session": "0437",
+      "video_start_s": 2114.112,
+      "duration_s": 1717.115,
+      "start_utc": "2026-07-24T22:56:12Z"
+    },
+    {
+      "video": "GX010438.MP4",
+      "session": "0438",
+      "video_start_s": 3831.227,
+      "duration_s": 1228.06,
+      "start_utc": "2026-07-24T23:25:36Z"
+    },
+    {
+      "video": "GX010439.MP4",
+      "session": "0439",
+      "video_start_s": 5059.287,
+      "duration_s": 925.858,
+      "start_utc": "2026-07-24T23:55:05Z"
+    },
+    {
+      "video": "GX010440.MP4",
+      "session": "0440",
+      "video_start_s": 5985.145,
+      "duration_s": 2114.112,
+      "start_utc": "2026-07-25T00:11:24Z"
+    },
+    {
+      "video": "GX020440.MP4",
+      "session": "0440",
+      "video_start_s": 8099.257,
+      "duration_s": 2114.112,
+      "start_utc": "2026-07-25T00:46:38Z"
+    },
+    {
+      "video": "GX030440.MP4",
+      "session": "0440",
+      "video_start_s": 10213.369,
+      "duration_s": 1515.381,
+      "start_utc": "2026-07-25T01:21:52Z"
+    },
+    {
+      "video": "GX010441.MP4",
+      "session": "0441",
+      "video_start_s": 11728.75,
+      "duration_s": 14.381,
+      "start_utc": "2026-07-25T01:55:17Z"
+    },
+    {
+      "video": "GX010442.MP4",
+      "session": "0442",
+      "video_start_s": 11743.131,
+      "duration_s": 24.691,
+      "start_utc": "2026-07-25T01:59:40Z"
+    },
+    {
+      "video": "GX010443.MP4",
+      "session": "0443",
+      "video_start_s": 11767.822,
+      "duration_s": 899.198,
+      "start_utc": "2026-07-25T02:03:26Z"
+    },
+    {
+      "video": "GX010444.MP4",
+      "session": "0444",
+      "video_start_s": 12667.02,
+      "duration_s": 1693.926,
+      "start_utc": "2026-07-25T02:19:51Z"
+    },
+    {
+      "video": "GX010445.MP4",
+      "session": "0445",
+      "video_start_s": 14360.946,
+      "duration_s": 1128.828,
+      "start_utc": "2026-07-25T03:10:21Z"
+    },
+    {
+      "video": "GX010446.MP4",
+      "session": "0446",
+      "video_start_s": 15489.774,
+      "duration_s": 44.411,
+      "start_utc": "2026-07-25T03:37:23Z"
+    },
+    {
+      "video": "GX010447.MP4",
+      "session": "0447",
+      "video_start_s": 15534.185,
+      "duration_s": 1069.569,
+      "start_utc": "2026-07-25T03:38:15Z"
+    }
+  ],
+  "note": "offset_s = 数据时间 - 视频时间；播放器 sampleAt(video.currentTime + offset_s)。手动微调只需改 offset_s。"
+}

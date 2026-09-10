@@ -1,0 +1,858 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<link rel="icon" href="data:,">
+<title>骑行仪表盘 · 播放器外挂</title>
+<style>
+  :root{
+    --accent:#3de0c9; --bg:#0c1014; --panel:rgba(12,16,20,.66); --line:rgba(255,255,255,.14);
+    --text:#eef2f5; --dim:#9aa7b0; --warn:#ffb65c; --hr:#ff6b6b; --alt:#7fb8ff; --slope:#b8e06b;
+  }
+  *{margin:0;padding:0;box-sizing:border-box}
+  html,body{height:100%}
+  body{background:var(--bg);color:var(--text);font-family:-apple-system,"PingFang SC","Microsoft YaHei",sans-serif;display:flex;flex-direction:column;min-height:100vh;overflow:hidden}
+  /* ===== 顶栏 ===== */
+  .topbar{display:flex;align-items:center;gap:10px;padding:10px 16px;border-bottom:1px solid var(--line);flex-wrap:wrap;flex-shrink:0}
+  .brand{font-weight:700;letter-spacing:.5px;font-size:15px;white-space:nowrap}
+  .brand small{color:var(--dim);font-weight:400;margin-left:6px;font-size:11px}
+  .spacer{flex:1}
+  .btn{background:rgba(255,255,255,.07);border:1px solid var(--line);color:var(--text);border-radius:8px;padding:6px 12px;font-size:13px;cursor:pointer;white-space:nowrap;transition:background .15s}
+  .btn:hover{background:rgba(255,255,255,.14)}
+  .btn.primary{background:rgba(61,224,201,.16);border-color:rgba(61,224,201,.5);color:var(--accent)}
+  .btn.primary:hover{background:rgba(61,224,201,.26)}
+  select.btn{padding:5px 8px;background:rgba(255,255,255,.07)}
+  .status{font-size:12px;color:var(--dim);white-space:nowrap;max-width:340px;overflow:hidden;text-overflow:ellipsis}
+  .offset-badge{font-size:12px;color:var(--accent);white-space:nowrap;padding:3px 10px;background:rgba(61,224,201,.08);border-radius:6px;border:1px solid rgba(61,224,201,.2);font-variant-numeric:tabular-nums}
+  /* ===== 舞台 ===== */
+  .stage-wrap{flex:1;display:flex;align-items:center;justify-content:center;padding:14px;min-height:0;position:relative}
+  .stage{position:relative;background:#000;border-radius:10px;overflow:hidden;box-shadow:0 10px 40px rgba(0,0,0,.5);max-width:100%;max-height:100%}
+  .stage video,.stage canvas{display:block;width:100%;height:100%;object-fit:contain}
+  .stage canvas{position:absolute;inset:0}
+  .empty{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;color:var(--dim);z-index:5;background:radial-gradient(120% 120% at 50% 30%,#10161c 0%,#080b0e 100%);text-align:center;padding:20px}
+  .empty.dimmed{pointer-events:none;opacity:0}
+  .empty .big{font-size:16px;color:var(--text)}
+  .empty .hint{font-size:12px;line-height:1.9;max-width:420px}
+  .empty .hint b{color:var(--accent);font-weight:600}
+  .empty .row{display:flex;gap:10px}
+  .badge{display:inline-block;border:1px dashed var(--line);border-radius:6px;padding:3px 8px;font-size:12px;color:var(--dim)}
+  /* ===== 控制条 ===== */
+  .controlbar{display:flex;align-items:center;gap:12px;padding:8px 16px 12px;border-top:1px solid var(--line);flex-shrink:0;flex-wrap:wrap}
+  .ctrl-btn{background:none;border:none;color:var(--text);width:36px;height:36px;border-radius:50%;cursor:pointer;display:flex;align-items:center;justify-content:center;transition:background .15s}
+  .ctrl-btn:hover{background:rgba(255,255,255,.12)}
+  .ctrl-btn svg{width:18px;height:18px;fill:currentColor}
+  input[type=range].seek{flex:1;min-width:140px;accent-color:var(--accent);cursor:pointer}
+  .time{font-size:12px;color:var(--dim);font-variant-numeric:tabular-nums;white-space:nowrap}
+  .speed-select{margin-left:auto}
+  .widgets-toggle{display:flex;gap:6px;align-items:center}
+  .widgets-toggle label{font-size:12px;color:var(--dim);display:flex;align-items:center;gap:4px;cursor:pointer;user-select:none;background:rgba(255,255,255,.05);border:1px solid var(--line);padding:4px 9px;border-radius:20px;transition:all .15s}
+  .widgets-toggle label.on{background:rgba(61,224,201,.14);border-color:rgba(61,224,201,.5);color:var(--accent)}
+  .widgets-toggle label input{display:none}
+  /* ===== 仪表开关面板 ===== */
+  .panel{position:fixed;top:0;right:0;bottom:0;width:min(300px,86vw);background:#11161c;border-left:1px solid var(--line);z-index:40;transform:translateX(100%);transition:transform .22s ease;display:flex;flex-direction:column}
+  .panel.open{transform:translateX(0)}
+  .panel .p-head{display:flex;align-items:center;justify-content:space-between;padding:14px 16px;border-bottom:1px solid var(--line)}
+  .panel .p-head h3{font-size:14px}
+  .panel .p-close{background:none;border:none;color:var(--dim);font-size:18px;cursor:pointer;padding:4px 8px}
+  .panel .p-body{padding:14px 16px;overflow-y:auto;display:flex;flex-direction:column;gap:10px;font-size:13px}
+  .panel .p-body h4{font-size:11px;color:var(--dim);letter-spacing:1px;margin-top:6px}
+  .panel label{display:flex;align-items:center;justify-content:space-between;cursor:pointer;padding:6px 0;border-bottom:1px solid rgba(255,255,255,.05)}
+  .panel label span:first-child{display:flex;align-items:center;gap:8px}
+  .panel label .dot{width:8px;height:8px;border-radius:50%}
+  .panel input[type=checkbox]{accent-color:var(--accent);width:16px;height:16px;cursor:pointer}
+  .panel .note{font-size:11px;color:var(--dim);line-height:1.7;margin-top:10px}
+  .panel .note code{color:var(--accent);font-size:11px}
+  .panel .p-sep{border:none;border-top:1px solid var(--line);margin:8px 0}
+  .offset-row{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+  .offset-val{font-size:15px;font-weight:600;color:var(--accent);min-width:52px;text-align:center;font-variant-numeric:tabular-nums}
+  .offset-val-wide{min-width:100%;font-size:12px;order:-1;width:100%;text-align:left;margin-bottom:4px;line-height:1.5}
+  .off-btn{background:rgba(255,255,255,.06);border:1px solid var(--line);color:var(--fg);font-size:11px;padding:5px 8px;border-radius:6px;cursor:pointer;font-family:inherit}
+  .off-btn:hover{background:rgba(255,255,255,.12)}
+  .off-input{flex:1;min-width:80px;background:rgba(255,255,255,.04);border:1px solid var(--line);color:var(--fg);font-size:12px;padding:5px 8px;border-radius:6px;font-family:inherit}
+  .scrim{position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:39;opacity:0;pointer-events:none;transition:opacity .22s}
+  .scrim.show{opacity:1;pointer-events:auto}
+  @media (max-width:720px){
+    .topbar{padding:8px 10px;gap:8px}
+    .brand small{display:none}
+    .status{max-width:150px}
+    .stage-wrap{padding:8px}
+    .controlbar{padding:6px 10px 10px;gap:8px}
+  }
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <div class="brand">骑行仪表盘 <small>player overlay · 外挂显示</small></div>
+  <div class="spacer"></div>
+  <div class="status" id="status">未加载数据</div>
+  <div class="offset-badge" id="offsetBadge" style="display:none"></div>
+  <button class="btn" id="btnVideo">打开视频</button>
+  <button class="btn primary" id="btnData">打开数据 JSON</button>
+  <button class="btn" id="btnPanel">仪表盘</button>
+  <input type="file" id="fileVideo" accept="video/mp4,video/quicktime,video/webm,video/x-matroska,video/*" hidden>
+  <input type="file" id="fileData" accept=".json,application/json" hidden>
+</div>
+
+<div class="stage-wrap">
+  <div class="stage" id="stage">
+    <video id="video" playsinline></video>
+    <canvas id="canvas"></canvas>
+    <div class="empty" id="empty">
+      <div class="big">把视频和运动数据「外挂」到播放器里</div>
+      <div class="row">
+        <button class="btn primary" id="btnData2">选择数据 JSON</button>
+        <button class="btn" id="btnVideo2">选择视频</button>
+      </div>
+      <div class="hint">
+        直接 <b>拖拽</b> 文件到窗口即可：<span class="badge">.mp4 / .mov</span> <span class="badge">.json</span><br>
+        JSON 由 <b>bin/gopro-export-json.py</b> 从 FIT / GPX / GoPro 元数据导出<br>
+        先拖数据可「无视频预览」仪表盘动画；再拖视频即叠加到画面上
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="controlbar">
+  <button class="ctrl-btn" id="btnPlay" title="播放 / 暂停 (空格)">
+    <svg id="icPlay" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
+    <svg id="icPause" viewBox="0 0 24 24" style="display:none"><path d="M6 5h4v14H6zM14 5h4v14h-4z"/></svg>
+  </button>
+  <span class="time" id="timeCur">00:00</span>
+  <input type="range" class="seek" id="seek" min="0" max="1000" value="0" step="1">
+  <span class="time" id="timeTot">00:00</span>
+  <select class="btn speed-select" id="rate" title="播放速度">
+    <option value="0.5">0.5×</option>
+    <option value="1" selected>1×</option>
+    <option value="2">2×</option>
+    <option value="3">3×</option>
+    <option value="4">4×</option>
+  </select>
+</div>
+
+<div class="scrim" id="scrim"></div>
+<div class="panel" id="panel">
+  <div class="p-head"><h3>仪表盘开关</h3><button class="p-close" id="btnPanelClose">×</button></div>
+  <div class="p-body" id="panelBody"></div>
+</div>
+
+<script>
+/* ============================================================================
+ * 骑行仪表盘 · 播放器外挂
+ * 数据：bin/gopro-export-json.py 导出的列式 JSON（{meta, series}）
+ * 时间轴：t = 相对视频开头的秒；播放器用 video.currentTime 查表插值。
+ * 改仪表样式/开关 = 改这个文件，刷新即生效；视频原片永不重新渲染。
+ * ==========================================================================*/
+
+const CONFIG = {
+  speedUnit: 'kph',      // 'kph' | 'mph'
+  distanceUnit: 'km',    // 'km' | 'mi'
+  historyWindow: 120,    // 底部速度曲线时间窗（秒）
+  historyStep: 0.25,     // 曲线采样步长（秒）
+  profileStep: 1.0,      // 海拔剖面采样步长（秒）
+  palette: { accent:'#3de0c9', warn:'#ffb65c', hr:'#ff6b6b', alt:'#7fb8ff', slope:'#b8e06b', text:'#f4f7f9', dim:'#9aa7b0' },
+};
+
+/* 每个仪表：{key, label, color, def} —— 可在面板里开关，状态存 localStorage */
+const WIDGETS = [
+  { key:'speed',   label:'速度',          color:'#f4f7f9', def:true },
+  { key:'power',   label:'功率',          color:'#ffb65c', def:true },
+  { key:'hr',      label:'心率',          color:'#ff6b6b', def:true },
+  { key:'cad',     label:'踏频',          color:'#3de0c9', def:true },
+  { key:'alt',     label:'海拔',          color:'#7fb8ff', def:true },
+  { key:'grad',    label:'坡度',          color:'#b8e06b', def:true },
+  { key:'dist',    label:'距离',          color:'#f4f7f9', def:true },
+  { key:'atemp',   label:'温度',          color:'#d8dee3', def:false },
+  { key:'curve',   label:'速度曲线',      color:'#3de0c9', def:true },
+  { key:'profile', label:'海拔剖面',      color:'#7fb8ff', def:true },
+  { key:'map',     label:'轨迹地图',      color:'#3de0c9', def:true },
+];
+
+/* ---------------- 状态 ---------------- */
+const S = {
+  data:null, series:null, fields:[], profile:null, track:null,
+  videoSrc:null, videoReady:false,
+  playing:false, rate:1, virtualT:0, lastTs:null, hasVideo:false,
+  widgets:{}, history:[], dirty:true,
+  offset:0, offsetKey:null, offsetSegments:null,
+};
+function loadWidgetPrefs(){
+  const prefs = {};
+  try{
+    WIDGETS.forEach(w => prefs[w.key] = localStorage.getItem('w_'+w.key));
+  }catch(e){}
+  WIDGETS.forEach(w => S.widgets[w.key] = prefs[w.key]==null ? w.def : prefs[w.key]==='1');
+}
+loadWidgetPrefs();
+
+/* ---------------- DOM ---------------- */
+const $ = id => document.getElementById(id);
+const video = $('video'), canvas = $('canvas'), stage = $('stage');
+const ctx = canvas.getContext('2d');
+const empty = $('empty');
+
+/* ---------------- 单位换算 ---------------- */
+const UNITS = {
+  kph: { spd:v=>v*3.6,      spdL:'km/h',  dist:v=>v/1000,     distL:'km' },
+  mph: { spd:v=>v*2.236936, spdL:'mph',   dist:v=>v/1609.344, distL:'mi' },
+};
+const U = UNITS[CONFIG.speedUnit] || UNITS.kph;
+
+/* ---------------- 数据加载 ---------------- */
+function setStatus(msg){ $('status').textContent = msg; }
+
+async function loadDataFromFile(file){
+  setStatus('读取 ' + file.name + ' …');
+  try{
+    const text = await file.text();
+    parseData(text, file.name);
+    tryAutoLoadOffset(file.name);
+  }catch(e){ setStatus('数据读取失败: ' + e.message); }
+}
+async function loadDataFromUrl(url){
+  setStatus('加载 ' + url + ' …');
+  try{
+    const r = await fetch(url);
+    if(!r.ok) throw new Error('HTTP ' + r.status);
+    parseData(await r.text(), url);
+    tryAutoLoadOffset(url);
+  }catch(e){
+    setStatus('无法从 ' + url + ' 加载（file:// 下禁止 fetch，请直接拖拽 JSON 文件）');
+  }
+}
+/* 自动查找与数据同名的 .offset.json 并应用（URL 未显式指定 offsetFile 时） */
+function tryAutoLoadOffset(dataUrl){
+  const q = new URLSearchParams(location.search);
+  if(q.get('offsetFile') !== null) return; // 显式指定了 offsetFile，由那边加载
+  try{
+    const u = new URL(dataUrl, location.href);
+    const offsetUrl = u.href.replace(/\.json$/i, '.offset.json');
+    if(offsetUrl === u.href) return;
+    fetch(offsetUrl).then(r=>{ if(!r.ok) return null; return r.json(); }).then(j=>{
+      if(j) applyOffsetFile(j);
+    }).catch(()=>{});
+  }catch(e){}
+}
+/* 解析 offset 文件：segments 里每段视频有独立的 offset（视频间有暂停/间隔时非线性） */
+function applyOffsetFile(j){
+  if(j.segments && Array.isArray(j.segments) && j.segments.length){
+    const dataStart = new Date(j.data_start_utc).getTime() / 1000;
+    S.offsetSegments = j.segments.map(seg => ({
+      video_start_s: seg.video_start_s,
+      duration_s: seg.duration_s,
+      offset_s: (new Date(seg.start_utc).getTime() / 1000 - dataStart) - seg.video_start_s,
+      video: seg.video,
+    }));
+  } else if(typeof j.offset_s === 'number'){
+    // 兼容旧格式：单一全局 offset
+    S.offsetSegments = null;
+    S.offset = j.offset_s;
+  }
+  S.dirty = true;
+  const ov = $('offsetVal'); if(ov) ov.textContent = fmtOffsetDisplay();
+}
+/* 视频时间 → 数据时间：根据当前视频时间找对应 segment，用该段的 offset + 用户微调 */
+function videoTimeToDataTime(vt){
+  if(S.offsetSegments && S.offsetSegments.length){
+    let seg = S.offsetSegments[0];
+    for(let i = 0; i < S.offsetSegments.length; i++){
+      const s = S.offsetSegments[i];
+      if(vt >= s.video_start_s && vt < s.video_start_s + s.duration_s){ seg = s; break; }
+      if(vt >= s.video_start_s) seg = s; // 超出最后一段时用最后一段
+    }
+    return vt + seg.offset_s + S.offset;
+  }
+  return vt + S.offset;
+}
+/* 当前 segment 的基础 offset（不含用户微调），用于 UI 显示 */
+function currentBaseOffset(vt){
+  if(S.offsetSegments && S.offsetSegments.length){
+    let seg = S.offsetSegments[0];
+    for(let i = 0; i < S.offsetSegments.length; i++){
+      const s = S.offsetSegments[i];
+      if(vt >= s.video_start_s && vt < s.video_start_s + s.duration_s){ seg = s; break; }
+      if(vt >= s.video_start_s) seg = s;
+    }
+    return seg.offset_s;
+  }
+  return 0;
+}
+function fmtOffsetDisplay(){
+  const vt = currentT();
+  const base = currentBaseOffset(vt);
+  const total = videoTimeToDataTime(vt) - vt;
+  if(S.offsetSegments && S.offsetSegments.length){
+    return '基础 ' + base.toFixed(1) + '  微调 ' + (S.offset >= 0 ? '+' : '') + S.offset.toFixed(1) + '  = ' + (total >= 0 ? '+' : '') + total.toFixed(1) + 's';
+  }
+  return (S.offset >= 0 ? '+' : '') + S.offset.toFixed(1) + 's';
+}
+/* 顶部 offset 标签文字 */
+function offsetBadgeText(){
+  if(!S.series) return '';
+  const vt = currentT();
+  if(S.offsetSegments && S.offsetSegments.length){
+    const total = videoTimeToDataTime(vt) - vt;
+    return '⏱ 分段 ' + (total >= 0 ? '+' : '') + total.toFixed(1) + 's';
+  }
+  if(Math.abs(S.offset) > 0.01){
+    return '⏱ ' + (S.offset >= 0 ? '+' : '') + S.offset.toFixed(1) + 's';
+  }
+  return '';
+}
+function parseData(text, name){
+  const d = JSON.parse(text);
+  let series;
+  if(d.rows && Array.isArray(d.rows) && d.fields){
+    // 行式（v2）→ 列式（运行时列式便于二分查找）
+    series = {};
+    d.fields.forEach((f, ci) => { series[f] = d.rows.map(r => r[ci]); });
+  } else if(d.series && Array.isArray(d.series.t)){
+    series = d.series; // 兼容旧列式（v1）
+  } else {
+    throw new Error('不是 gopro-export-json 输出格式');
+  }
+  S.data = d; S.series = series;
+  S.fields = (d.fields || (d.meta && d.meta.fields) || []).filter(f => f!=='t' && Array.isArray(series[f]));
+  // offset 持久化：按数据文件名；URL 显式指定 offset 时不覆盖
+  S.offsetKey = name.replace(/^.*\//,'').replace(/\.json$/,'');
+  if(new URLSearchParams(location.search).get('offset') === null){
+    try{ const saved = localStorage.getItem('off_'+S.offsetKey); if(saved !== null) S.offset = parseFloat(saved) || 0; }catch(e){}
+  }
+  const ov = $('offsetVal'); if(ov) ov.textContent = fmtOffsetDisplay();
+  buildProfile();
+  buildTrack();
+  const n = series.t.length;
+  const span = d.meta ? d.meta.duration_s : (series.t[n-1] - series.t[0]);
+  empty.classList.add('dimmed'); // 数据已加载：隐藏引导，直接预览仪表盘
+  S.statusBase = name + ' · ' + n.toLocaleString() + ' 点 · ' + fmtDur(span) + (d.meta && d.meta.alignment==='data-only' ? ' · 纯数据模式' : '');
+  setStatus(S.statusBase);
+  resetTransport();
+  draw();
+}
+function buildProfile(){
+  const ts = S.series.t, al = S.series.alt;
+  if(!ts || !al){ S.profile = null; return; }
+  const step = Math.max(1, Math.round(CONFIG.profileStep/avgStep()));
+  const points = [];
+  let amin=Infinity, amax=-Infinity;
+  for(let i=0;i<ts.length;i+=step){
+    points.push([ts[i], al[i]]);
+    if(al[i]!=null){ if(al[i]<amin)amin=al[i]; if(al[i]>amax)amax=al[i]; }
+  }
+  if(!isFinite(amin)){ amin=0; amax=1; }
+  if(amax-amin<2){ amin-=1; amax+=1; }
+  S.profile = {points, amin, amax, t0:points[0][0], t1:points[points.length-1][0]};
+}
+function buildTrack(){
+  const lat = S.series.lat, lon = S.series.lon;
+  if(!lat || !lon){ S.track = null; return; }
+  let minLat=Infinity, maxLat=-Infinity, minLon=Infinity, maxLon=-Infinity;
+  const raw = [];
+  for(let i=0;i<lat.length;i++){
+    if(lat[i]==null||lon[i]==null) continue;
+    raw.push([lat[i], lon[i]]);
+    if(lat[i]<minLat)minLat=lat[i]; if(lat[i]>maxLat)maxLat=lat[i];
+    if(lon[i]<minLon)minLon=lon[i]; if(lon[i]>maxLon)maxLon=lon[i];
+  }
+  if(raw.length<2){ S.track=null; return; }
+  // 降采样到最多 2000 点，保证绘制流畅
+  const step = Math.max(1, Math.floor(raw.length/2000));
+  const pts = [];
+  for(let i=0;i<raw.length;i+=step) pts.push(raw[i]);
+  if(pts[pts.length-1]!==raw[raw.length-1]) pts.push(raw[raw.length-1]);
+  const centerLat = (minLat+maxLat)/2;
+  S.track = {pts, minLat, maxLat, minLon, maxLon,
+    latScale:111320, lonScale:111320*Math.cos(centerLat*Math.PI/180)};
+}
+function avgStep(){
+  const ts = S.series.t;
+  const span = Math.min(ts.length-1, 2000);
+  return span>0 ? (ts[span]-ts[0])/span : 0.1;
+}
+function sampleAt(t){
+  const ts = S.series.t;
+  if(!ts.length) return null;
+  if(t < ts[0]) return null;
+  const last = ts.length-1;
+  if(t >= ts[last]) return pointAt(last, 1, t);
+  let lo=0, hi=last;
+  while(lo<hi){ const mid=(lo+hi+1)>>1; if(ts[mid]<=t) lo=mid; else hi=mid-1; }
+  const i=lo, i1=Math.min(i+1,last), span=ts[i1]-ts[i];
+  const frac = span>0 ? (t-ts[i])/span : 0;
+  return pointAt(i, frac, t);
+}
+function pointAt(i, frac, t){
+  const out = { t };
+  for(const f of S.fields){
+    const arr = S.series[f];
+    if(!arr){ out[f] = null; continue; }
+    const i1 = Math.min(i+1, arr.length-1);
+    const a = arr[i], b = arr[i1];
+    out[f] = (a==null||b==null) ? (a!=null?a:b) : a + (b-a)*frac;
+  }
+  return out;
+}
+
+/* ---------------- 传输控制 ---------------- */
+function resetTransport(){ S.virtualT = 0; S.playing = false; S.history = []; updatePlayIcon(); S.dirty = true; }
+function duration(){
+  if(S.hasVideo && video.readyState) return video.duration || 0;
+  if(S.data) return S.series.t[S.series.t.length-1] || 0;
+  return 0;
+}
+function currentT(){
+  if(S.hasVideo && video.readyState>=1) return video.currentTime;
+  return S.virtualT;
+}
+function seekTo(t){
+  t = Math.max(0, Math.min(t, duration() || t));
+  if(S.hasVideo && video.readyState>=1){ video.currentTime = t; }
+  S.virtualT = t;
+  S.dirty = true;
+}
+function togglePlay(){
+  if(!S.data && !S.hasVideo) return;
+  if(S.hasVideo && video.readyState>=1){
+    if(video.paused) video.play(); else video.pause();
+    S.playing = !video.paused;
+  }else{
+    S.playing = !S.playing;
+    if(S.playing && S.virtualT >= (duration()||0)) S.virtualT = 0;
+  }
+  updatePlayIcon();
+  S.dirty = true;
+}
+function updatePlayIcon(){
+  $('icPlay').style.display = S.playing ? 'none':'block';
+  $('icPause').style.display = S.playing ? 'block':'none';
+}
+video.addEventListener('play', ()=> { S.playing=true; updatePlayIcon(); });
+video.addEventListener('pause', ()=> { S.playing=false; updatePlayIcon(); });
+video.addEventListener('seeked', ()=>{ S.dirty = true; });
+
+/* ---------------- 视频 ---------------- */
+function loadVideoFile(file){
+  const url = URL.createObjectURL(file);
+  if(S.videoSrc) URL.revokeObjectURL(S.videoSrc);
+  S.videoSrc = url;
+  video.src = url;
+  video.load();
+  empty.classList.add('dimmed');
+  setStatus('视频: ' + file.name + ' · 数据未变');
+}
+video.addEventListener('loadedmetadata', ()=>{
+  S.hasVideo = true;
+  fitStage(video.videoWidth/video.videoHeight);
+  setStatus((S.data? '数据已加载 · ':'') + '视频 ' + fmtDur(video.duration||0) + ' · 空格播放');
+});
+video.addEventListener('error', ()=>{
+  if(!S.data) empty.classList.remove('dimmed');
+  setStatus('视频加载失败，请换一个文件');
+});
+function fitStage(ar){
+  const wrap = stage.parentElement;
+  const availW = wrap.clientWidth - 28, availH = wrap.clientHeight - 28;
+  let w = availW, h = w / ar;
+  if(h > availH){ h = availH; w = h * ar; }
+  stage.style.width = w+'px'; stage.style.height = h+'px';
+  sizeCanvas();
+}
+function sizeCanvas(){
+  const dpr = window.devicePixelRatio || 1;
+  canvas.width = Math.round(stage.clientWidth * dpr);
+  canvas.height = Math.round(stage.clientHeight * dpr);
+}
+window.addEventListener('resize', ()=>{
+  if(S.hasVideo) fitStage(video.videoWidth/video.videoHeight);
+  else fitStage(16/9);
+  draw();
+});
+
+/* ---------------- 绘制：仪表盘 ---------------- */
+const LAYOUT_W = 1280, LAYOUT_H = 720; // 设计基准，坐标按此缩放；非 16:9 视频时仪表垂直居中
+function draw(){
+  if(!stage.clientWidth) return;
+  const dpr = window.devicePixelRatio || 1;
+  if(Math.abs(canvas.width - stage.clientWidth*dpr) > 2) sizeCanvas();
+  ctx.setTransform(dpr,0,0,dpr,0,0);
+  ctx.clearRect(0,0,canvas.width,canvas.height);
+  if(!S.data) return;
+  const s = Math.min(stage.clientWidth/LAYOUT_W, stage.clientHeight/LAYOUT_H);
+  const ox = (stage.clientWidth - LAYOUT_W*s)/2, oy = (stage.clientHeight - LAYOUT_H*s)/2;
+  ctx.save();
+  ctx.translate(ox, oy);
+  ctx.scale(s,s);
+
+  const p = sampleAt(videoTimeToDataTime(currentT()));
+  if(p){ pushHistory(p); }
+  // 惰性更新面板 offset 显示（seek/播放导致 segment 变化时）
+  const ov = $('offsetVal');
+  if(ov){ const txt = fmtOffsetDisplay(); if(ov.textContent !== txt) ov.textContent = txt; }
+  // 惰性更新顶部 offset 标签（独立元素，不被状态栏截断）
+  const ob = $('offsetBadge');
+  if(ob){
+    const txt = offsetBadgeText();
+    if(txt){
+      if(ob.style.display !== 'inline-block') ob.style.display = 'inline-block';
+      if(ob.textContent !== txt) ob.textContent = txt;
+    } else if(ob.style.display !== 'none'){
+      ob.style.display = 'none';
+    }
+  }
+
+  if(S.widgets.speed)  drawSpeed(p);
+  if(S.widgets.power || S.widgets.hr || S.widgets.cad) drawLeftRow(p);
+  if(S.widgets.alt || S.widgets.grad || S.widgets.dist || S.widgets.atemp) drawRightCol(p);
+  if(S.widgets.curve)  drawCurve();
+  if(S.widgets.profile)drawProfile(p);
+  if(S.widgets.map)    drawMap(p);
+
+  ctx.restore();
+  S.dirty = false;
+}
+function panel(x,y,w,h,r){
+  ctx.beginPath();
+  ctx.moveTo(x+r,y); ctx.arcTo(x+w,y,x+w,y+h,r); ctx.arcTo(x+w,y+h,x,y+h,r);
+  ctx.arcTo(x,y+h,x,y,r); ctx.arcTo(x,y,x+w,y,r); ctx.closePath();
+  ctx.fillStyle = 'rgba(10,14,18,.68)';
+  ctx.fill();
+  ctx.strokeStyle = 'rgba(255,255,255,.12)';
+  ctx.lineWidth = 1;
+  ctx.stroke();
+}
+function label(x,y,text,color){
+  ctx.font = '600 13px -apple-system,"PingFang SC",sans-serif';
+  ctx.fillStyle = color || CONFIG.palette.dim;
+  ctx.textBaseline = 'middle';
+  ctx.fillText(text, x, y);
+}
+function bigNum(x,y,text,color,size){
+  ctx.font = '700 ' + size + 'px Menlo,Consolas,monospace';
+  ctx.fillStyle = color;
+  ctx.textBaseline = 'middle';
+  ctx.fillText(text, x, y);
+}
+function fmtNum(v,d){
+  if(v==null || !isFinite(v)) return '--';
+  return v.toFixed(d);
+}
+function drawSpeed(p){
+  const x=36,y=30,w=250,h=104;
+  panel(x,y,w,h,14);
+  label(x+20,y+24,'速度','rgba(255,255,255,.55)');
+  if(p && p.speed!=null){
+    bigNum(x+20,y+66, U.spd(p.speed).toFixed(1), CONFIG.palette.text, 52);
+    ctx.font = '600 16px -apple-system,sans-serif';
+    ctx.fillStyle = CONFIG.palette.dim;
+    ctx.textBaseline='middle';
+    ctx.fillText(U.spdL, x+150, y+66);
+  }else{
+    bigNum(x+20,y+66,'--', CONFIG.palette.dim, 52);
+  }
+  if(p && p.lat!=null && S.widgets.speed){
+    ctx.font='11px Menlo,monospace'; ctx.fillStyle='rgba(255,255,255,.32)';
+    ctx.fillText(p.lat.toFixed(5)+', '+p.lon.toFixed(5), x+20, y+88);
+  }
+}
+function tile(x,y,w,h,title,value,unit,color,vs){
+  panel(x,y,w,h,12);
+  label(x+14,y+22,title,'rgba(255,255,255,.5)');
+  bigNum(x+14,y+50, vs!=null?vs:'--', color, 30);
+  if(unit){ ctx.font='12px -apple-system,sans-serif'; ctx.fillStyle='rgba(255,255,255,.5)'; ctx.textBaseline='middle'; ctx.fillText(unit, x+14+(vs? vs.length*17+10:30), y+50); }
+}
+function drawLeftRow(p){
+  const y=146, w=116, h=78, gap=10, x0=36;
+  let xi=x0;
+  if(S.widgets.power){ tile(xi,y,w,h,'功率', p&&p.power!=null?fmtNum(p.power,0):null, p&&p.power!=null?'W':'', CONFIG.palette.warn, p&&p.power!=null?fmtNum(p.power,0):null); xi+=w+gap; }
+  if(S.widgets.hr){ tile(xi,y,w,h,'心率', p&&p.hr!=null?fmtNum(p.hr,0):null, p&&p.hr!=null?'bpm':'', CONFIG.palette.hr, p&&p.hr!=null?fmtNum(p.hr,0):null); xi+=w+gap; }
+  if(S.widgets.cad){ tile(xi,y,w,h,'踏频', p&&p.cad!=null?fmtNum(p.cad,0):null, p&&p.cad!=null?'rpm':'', CONFIG.palette.accent, p&&p.cad!=null?fmtNum(p.cad,0):null); }
+}
+function drawRightCol(p){
+  const x = LAYOUT_W - 36 - 250, y=30, w=250;
+  let yy=y;
+  if(S.widgets.alt){
+    panel(x,yy,w,72,12);
+    label(x+16,yy+20,'海拔','rgba(255,255,255,.5)');
+    if(p&&p.alt!=null){ bigNum(x+16,yy+48, fmtNum(p.alt,0), CONFIG.palette.alt, 30);
+      ctx.font='12px -apple-system,sans-serif'; ctx.fillStyle='rgba(255,255,255,.5)'; ctx.textBaseline='middle'; ctx.fillText('m', x+76, yy+48); }
+    else bigNum(x+16,yy+48,'--', CONFIG.palette.dim, 30);
+    yy += 84;
+  }
+  if(S.widgets.grad){
+    tile(x,yy,w,54,'坡度', p&&p.grad!=null?fmtNum(p.grad,1):null, p&&p.grad!=null?'%':'', CONFIG.palette.slope, p&&p.grad!=null?fmtNum(p.grad,1):null);
+    yy += 66;
+  }
+  if(S.widgets.dist){
+    tile(x,yy,w,54,'距离', p&&p.odo!=null?fmtNum(U.dist(p.odo),2):null, p&&p.odo!=null?U.distL:'', '#f4f7f9', p&&p.odo!=null?fmtNum(U.dist(p.odo),2):null);
+    yy += 66;
+  }
+  if(S.widgets.atemp){
+    tile(x,yy,w,54,'温度', p&&p.atemp!=null?fmtNum(p.atemp,0):null, p&&p.atemp!=null?'°C':'', '#d8dee3', p&&p.atemp!=null?fmtNum(p.atemp,0):null);
+  }
+}
+function drawCurve(){
+  const h = S.history;
+  if(h.length<2) return;
+  const x=36, y=600, w=LAYOUT_W-72, hh=90;
+  panel(x,y,w,hh,12);
+  label(x+16,y+20,'速度 · 最近 ' + CONFIG.historyWindow + 's','rgba(255,255,255,.5)');
+  const tEnd = h[h.length-1].t, tStart = tEnd - CONFIG.historyWindow;
+  let vmax = 8;
+  for(const q of h) if(q.v>vmax) vmax=q.v;
+  vmax = Math.ceil(vmax*1.15*3.6)/3.6; // 留 15% 余量
+  const plotTop = y+30, plotBot = y+hh-14;
+  const px = t => x+18 + (t-tStart)/CONFIG.historyWindow * (w-36);
+  const py = v => plotBot - (v/vmax)*(plotBot-plotTop);
+  ctx.beginPath();
+  let started=false;
+  for(const q of h){
+    if(q.t<tStart) continue;
+    const X=px(q.t), Y=py(q.v);
+    if(!started){ ctx.moveTo(X,Y); started=true; } else ctx.lineTo(X,Y);
+  }
+  ctx.strokeStyle=CONFIG.palette.accent; ctx.lineWidth=2.5; ctx.lineJoin='round'; ctx.stroke();
+  // 填充渐变
+  ctx.lineTo(px(tEnd), plotBot); ctx.lineTo(px(Math.max(tStart,h[0].t)), plotBot); ctx.closePath();
+  const g = ctx.createLinearGradient(0,plotTop,0,plotBot);
+  g.addColorStop(0,'rgba(61,224,201,.28)'); g.addColorStop(1,'rgba(61,224,201,0)');
+  ctx.fillStyle=g; ctx.fill();
+  // 当前点
+  const cur = h[h.length-1];
+  ctx.beginPath(); ctx.arc(px(cur.t), py(cur.v), 4, 0, Math.PI*2);
+  ctx.fillStyle='#fff'; ctx.fill();
+  // 刻度
+  ctx.font='10px Menlo,monospace'; ctx.fillStyle='rgba(255,255,255,.35)'; ctx.textBaseline='middle';
+  ctx.fillText('0', x+10, plotBot+6);
+  ctx.fillText(fmtNum(U.spd(vmax),0)+' '+U.spdL, x+10, plotTop+2);
+}
+function drawProfile(p){
+  if(!S.profile || S.profile.points.length<2) return;
+  const x=LAYOUT_W-36-250, y=314, w=250, hh=78;
+  panel(x,y,w,hh,12);
+  label(x+16,y+20,'海拔剖面','rgba(255,255,255,.5)');
+  const pr=S.profile, pts=pr.points;
+  const pt=(i)=>{ const q=pts[i]; return [x+16 + (q[0]-pr.t0)/(pr.t1-pr.t0)*(w-32), y+hh-24 - (q[1]-pr.amin)/(pr.amax-pr.amin)*(hh-40)]; };
+  ctx.beginPath();
+  for(let i=0;i<pts.length;i++){ if(pts[i][1]==null)continue; const [X,Y]=pt(i); i?ctx.lineTo(X,Y):ctx.moveTo(X,Y); }
+  ctx.strokeStyle=CONFIG.palette.alt; ctx.lineWidth=2; ctx.stroke();
+  if(p && p.t!=null){
+    const X = x+16 + Math.max(0,Math.min(w-32,(p.t-pr.t0)/(pr.t1-pr.t0)*(w-32)));
+    ctx.beginPath(); ctx.moveTo(X,y+24); ctx.lineTo(X,y+hh-14);
+    ctx.strokeStyle='rgba(255,255,255,.6)'; ctx.lineWidth=1.5; ctx.stroke();
+    if(p.alt!=null){
+      const Y = y+hh-24 - (p.alt-pr.amin)/(pr.amax-pr.amin)*(hh-40);
+      ctx.beginPath(); ctx.arc(X,Y,3.5,0,Math.PI*2); ctx.fillStyle='#fff'; ctx.fill();
+    }
+  }
+}
+function drawMap(p){
+  if(!S.track) return;
+  const x=LAYOUT_W-36-250, y=404, w=250, hh=180;
+  panel(x,y,w,hh,12);
+  label(x+16,y+20,'轨迹','rgba(255,255,255,.5)');
+  const tr=S.track;
+  const pad=16, plotW=w-32, plotH=hh-40;
+  const dLat=tr.maxLat-tr.minLat||1, dLon=tr.maxLon-tr.minLon||1;
+  const scale=Math.min(plotW/(dLon*tr.lonScale), plotH/(dLat*tr.latScale));
+  const cLat=(tr.minLat+tr.maxLat)/2, cLon=(tr.minLon+tr.maxLon)/2;
+  const px=lon=>x+pad+plotW/2+(lon-cLon)*tr.lonScale*scale;
+  const py=lat=>y+24+plotH/2-(lat-cLat)*tr.latScale*scale;
+  // 轨迹线
+  ctx.beginPath();
+  for(let i=0;i<tr.pts.length;i++){
+    const [la,lo]=tr.pts[i]; const X=px(lo),Y=py(la);
+    i?ctx.lineTo(X,Y):ctx.moveTo(X,Y);
+  }
+  ctx.strokeStyle='rgba(61,224,201,.45)'; ctx.lineWidth=2; ctx.lineJoin='round'; ctx.stroke();
+  // 当前位置
+  if(p && p.lat!=null && p.lon!=null){
+    const X=px(p.lon), Y=py(p.lat);
+    ctx.beginPath(); ctx.arc(X,Y,8,0,Math.PI*2); ctx.strokeStyle=CONFIG.palette.accent; ctx.lineWidth=2; ctx.stroke();
+    ctx.beginPath(); ctx.arc(X,Y,4,0,Math.PI*2); ctx.fillStyle='#fff'; ctx.fill();
+  }
+}
+
+/* ---------------- 历史曲线数据 ---------------- */
+let lastHistT = null;
+function pushHistory(p){
+  if(!S.series || S.series.speed==null) return;
+  const now = p.t;
+  if(lastHistT==null || now-lastHistT>=CONFIG.historyStep){
+    lastHistT = now;
+    S.history.push({t:now, v: p.speed!=null?p.speed:0});
+    const keep = CONFIG.historyWindow/CONFIG.historyStep;
+    if(S.history.length>keep) S.history.splice(0, S.history.length-keep);
+  }
+}
+
+/* ---------------- 主循环（虚拟时钟 + 界面） ---------------- */
+function tick(){
+  requestAnimationFrame(tick);
+  const now = performance.now()/1000;
+  let advancing = false;
+  if(S.playing && !S.hasVideo && S.data){
+    S.virtualT += (now-(S.lastTs||now)) * S.rate;
+    const tot = duration()||0;
+    if(S.virtualT>=tot && tot>0){ S.virtualT = tot; S.playing=false; updatePlayIcon(); }
+    advancing = true;
+  }
+  if(S.hasVideo && video.readyState>=1 && !video.paused) advancing = true;
+  S.lastTs = now;
+  if(advancing || S.dirty){
+    syncControls();
+    draw();
+  }
+}
+function syncControls(){
+  const tot = duration();
+  const cur = S.hasVideo&&video.readyState>=1 ? video.currentTime : S.virtualT;
+  $('timeCur').textContent = fmtDur(cur);
+  $('timeTot').textContent = fmtDur(tot);
+  const r = $('seek');
+  if(tot>0){ r.max = Math.round(tot*10); if(!r.mousedown) r.value = Math.round(cur*10); }
+}
+function fmtDur(s){
+  if(!isFinite(s)||s==null) return '00:00';
+  s=Math.max(0,Math.floor(s));
+  const h=Math.floor(s/3600), m=Math.floor(s%3600/60), ss=s%60;
+  const p=n=>String(n).padStart(2,'0');
+  return h>0 ? p(h)+':'+p(m)+':'+p(ss) : p(m)+':'+p(ss);
+}
+
+/* ---------------- 仪表开关面板 ---------------- */
+function buildPanel(){
+  const body = $('panelBody');
+  body.innerHTML = '';
+
+  // ---- 时间偏移控制 ----
+  const oh = document.createElement('h4'); oh.textContent='时间偏移'; body.appendChild(oh);
+  const odesc = document.createElement('div');
+  odesc.className='note';
+  odesc.style.marginBottom='8px';
+  odesc.textContent='分段映射：每段视频独立 offset（视频间有暂停时）；下方按钮为全局微调';
+  body.appendChild(odesc);
+
+  const orow = document.createElement('div');
+  orow.className='offset-row';
+  const oval = document.createElement('span');
+  oval.className='offset-val offset-val-wide';
+  oval.id='offsetVal';
+  oval.textContent = fmtOffsetDisplay();
+
+  function refreshOffset(){
+    oval.textContent = fmtOffsetDisplay();
+    S.dirty = true;
+    if(S.offsetKey) try{ localStorage.setItem('off_'+S.offsetKey, S.offset); }catch(e){}
+  }
+  function adj(d){ S.offset = Math.round((S.offset + d)*10)/10; refreshOffset(); }
+
+  [['-10',-10],['-1',-1],['-0.1',-0.1]].forEach(([lab,d])=>{
+    const b=document.createElement('button'); b.className='off-btn'; b.textContent=lab;
+    b.addEventListener('click',()=>adj(d)); orow.appendChild(b);
+  });
+  orow.appendChild(oval);
+  [['+0.1',0.1],['+1',1],['+10',10]].forEach(([lab,d])=>{
+    const b=document.createElement('button'); b.className='off-btn'; b.textContent=lab;
+    b.addEventListener('click',()=>adj(d)); orow.appendChild(b);
+  });
+  body.appendChild(orow);
+
+  const oirow = document.createElement('div');
+  oirow.className='offset-row';
+  const oinput = document.createElement('input');
+  oinput.type='number'; oinput.step='0.1'; oinput.className='off-input';
+  oinput.value = S.offset;
+  oinput.addEventListener('change',()=>{ S.offset=parseFloat(oinput.value)||0; refreshOffset(); });
+  const oreset = document.createElement('button');
+  oreset.className='off-btn'; oreset.textContent='重置';
+  oreset.addEventListener('click',()=>{ S.offset=0; oinput.value=0; refreshOffset(); });
+  oirow.appendChild(oinput); oirow.appendChild(oreset);
+  body.appendChild(oirow);
+
+  const sep = document.createElement('hr'); sep.className='p-sep'; body.appendChild(sep);
+
+  // ---- 仪表开关 ----
+  const h = document.createElement('h4'); h.textContent='仪表'; body.appendChild(h);
+  WIDGETS.forEach(w=>{
+    const lab = document.createElement('label');
+    lab.innerHTML = '<span><span class="dot" style="background:'+w.color+'"></span>'+w.label+'</span>';
+    const cb = document.createElement('input');
+    cb.type='checkbox'; cb.checked = S.widgets[w.key];
+    cb.addEventListener('change', ()=>{
+      S.widgets[w.key] = cb.checked;
+      try{ localStorage.setItem('w_'+w.key, cb.checked?'1':'0'); }catch(e){}
+      S.dirty = true;
+    });
+    lab.appendChild(cb);
+    body.appendChild(lab);
+  });
+  const note = document.createElement('div');
+  note.className='note';
+  note.innerHTML='配置在页面顶部 <code>CONFIG</code> 里：速度单位、曲线时长、颜色。<br>改完刷新即生效，视频原片零渲染。';
+  body.appendChild(note);
+}
+$('btnPanel').addEventListener('click', ()=>{ $('panel').classList.add('open'); $('scrim').classList.add('show'); });
+$('btnPanelClose').addEventListener('click', closePanel);
+$('scrim').addEventListener('click', closePanel);
+function closePanel(){ $('panel').classList.remove('open'); $('scrim').classList.remove('show'); }
+
+/* ---------------- 事件绑定 ---------------- */
+$('btnData').addEventListener('click', ()=> $('fileData').click());
+$('btnData2').addEventListener('click', ()=> $('fileData').click());
+$('fileData').addEventListener('change', e=>{ if(e.target.files[0]) loadDataFromFile(e.target.files[0]); e.target.value=''; });
+$('btnVideo').addEventListener('click', ()=> $('fileVideo').click());
+$('btnVideo2').addEventListener('click', ()=> $('fileVideo').click());
+$('fileVideo').addEventListener('change', e=>{ if(e.target.files[0]) loadVideoFile(e.target.files[0]); e.target.value=''; });
+$('btnPlay').addEventListener('click', togglePlay);
+$('seek').addEventListener('input', e=>{ const r=e.target; r.mousedown=true; });
+$('seek').addEventListener('change', e=>{ seekTo(+e.target.value/10); e.target.mousedown=false; });
+$('rate').addEventListener('change', e=>{ S.rate=+e.target.value; video.playbackRate=S.rate; });
+
+window.addEventListener('keydown', e=>{
+  if(e.target.tagName==='INPUT'||e.target.tagName==='SELECT') return;
+  if(e.code==='Space'){ e.preventDefault(); togglePlay(); }
+  if(e.code==='ArrowLeft') seekTo(currentT()-5);
+  if(e.code==='ArrowRight') seekTo(currentT()+5);
+});
+
+/* 拖拽：JSON = 数据，视频 = 视频 */
+let dragDepth = 0;
+window.addEventListener('dragover', e=>{ e.preventDefault(); e.dataTransfer.dropEffect='copy'; });
+window.addEventListener('dragenter', e=>{ e.preventDefault(); dragDepth++; });
+window.addEventListener('dragleave', ()=>{ dragDepth=Math.max(0,dragDepth-1); });
+window.addEventListener('drop', e=>{
+  e.preventDefault(); dragDepth=0;
+  const files = [...(e.dataTransfer.files||[])];
+  for(const f of files){
+    const n=f.name.toLowerCase();
+    if(n.endsWith('.json')) loadDataFromFile(f);
+    else if(/\.(mp4|mov|m4v|webm|mkv|avi)$/.test(n)) loadVideoFile(f);
+    else setStatus('无法识别 ' + f.name + '（需要 .json 数据或视频文件）');
+  }
+});
+
+/* URL 参数模式：?data=xxx.json&video=xxx.mp4&offset=49&offsetFile=xxx.offset.json */
+(function(){
+  const q = new URLSearchParams(location.search);
+  const v = q.get('video'), d = q.get('data');
+  if(v){ video.src = v; video.load(); empty.classList.add('dimmed'); S.hasVideo=true; video.addEventListener('loadedmetadata',()=>fitStage(video.videoWidth/video.videoHeight)); }
+  if(d) loadDataFromUrl(d);
+  const off = q.get('offset');
+  if(off !== null){ S.offset = parseFloat(off) || 0; }
+  const offFile = q.get('offsetFile');
+  if(offFile){
+    fetch(offFile).then(r=>r.json()).then(j=>{
+      applyOffsetFile(j);
+      if(S.offsetKey) try{ localStorage.setItem('off_'+S.offsetKey, S.offset); }catch(e){}
+    }).catch(()=>{});
+  }
+})();
+
+/* ---------------- 启动 ---------------- */
+fitStage(16/9);
+buildPanel();
+requestAnimationFrame(tick);
+</script>
+</body>
+</html>
