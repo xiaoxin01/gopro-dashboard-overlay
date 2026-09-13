@@ -174,6 +174,7 @@ const S = {
   data:null, series:null, fields:[], profile:null, track:null,
   videoSrc:null, videoReady:false,
   playing:false, rate:1, virtualT:0, lastTs:null, hasVideo:false,
+  dataStart:0, dataDuration:0,
   widgets:{}, history:[], dirty:true,
   offset:0, offsetKey:null, offsetSegments:null,
 };
@@ -314,6 +315,9 @@ function parseData(text, name){
   }
   S.data = d; S.series = series;
   S.fields = (d.fields || (d.meta && d.meta.fields) || []).filter(f => f!=='t' && Array.isArray(series[f]));
+  S.dataStart = Number(series.t[0]) || 0;
+  const dataEnd = Number(series.t[series.t.length-1]);
+  S.dataDuration = Math.max(0, Number(d.meta && d.meta.duration_s) || dataEnd - S.dataStart || 0);
   // offset 持久化：按数据文件名；URL 显式指定 offset 时不覆盖
   S.offsetKey = name.replace(/^.*\//,'').replace(/\.json$/,'');
   if(new URLSearchParams(location.search).get('offset') === null){
@@ -323,7 +327,7 @@ function parseData(text, name){
   buildProfile();
   buildTrack();
   const n = series.t.length;
-  const span = d.meta ? d.meta.duration_s : (series.t[n-1] - series.t[0]);
+  const span = S.dataDuration;
   empty.classList.add('dimmed'); // 数据已加载：隐藏引导，直接预览仪表盘
   S.statusBase = name + ' · ' + n.toLocaleString() + ' 点 · ' + fmtDur(span) + (d.meta && d.meta.alignment==='data-only' ? ' · 纯数据模式' : '');
   setStatus(S.statusBase);
@@ -395,10 +399,10 @@ function pointAt(i, frac, t){
 }
 
 /* ---------------- 传输控制 ---------------- */
-function resetTransport(){ S.virtualT = 0; S.playing = false; S.history = []; updatePlayIcon(); S.dirty = true; }
+function resetTransport(){ S.virtualT = 0; S.lastTs = null; S.playing = false; S.history = []; lastHistT = null; updatePlayIcon(); S.dirty = true; }
 function duration(){
   if(S.hasVideo && video.readyState) return video.duration || 0;
-  if(S.data) return S.series.t[S.series.t.length-1] || 0;
+  if(S.data) return S.dataDuration;
   return 0;
 }
 function currentT(){
@@ -410,6 +414,11 @@ function seekTo(t){
   if(S.hasVideo && video.readyState>=1){ video.currentTime = t; }
   S.virtualT = t;
   S.dirty = true;
+}
+function playbackDataTime(t){
+  // In data-only mode the virtual clock is relative to the first data point.
+  // Video offsets are meaningful only after a video has been loaded.
+  return S.hasVideo ? videoTimeToDataTime(t) : S.dataStart + t;
 }
 function togglePlay(){
   if(!S.data && !S.hasVideo) return;
@@ -484,7 +493,7 @@ function draw(){
   ctx.translate(ox, oy);
   ctx.scale(s,s);
 
-  const p = sampleAt(videoTimeToDataTime(currentT()));
+  const p = sampleAt(playbackDataTime(currentT()));
   if(p){ pushHistory(p); }
   // 惰性更新面板 offset 显示（seek/播放导致 segment 变化时）
   const ov = $('offsetVal');
@@ -594,14 +603,14 @@ function drawRightCol(p){
 function drawCurve(){
   const h = S.history;
   if(h.length<2) return;
-  const x=36, y=600, w=LAYOUT_W-72, hh=90;
+  const x=36, y=560, w=LAYOUT_W-72, hh=70;
   panel(x,y,w,hh,12);
-  label(x+16,y+20,'速度 · 最近 ' + CONFIG.historyWindow + 's','rgba(255,255,255,.5)');
+  label(x+16,y+18,'速度 · 最近 ' + CONFIG.historyWindow + 's','rgba(255,255,255,.5)');
   const tEnd = h[h.length-1].t, tStart = tEnd - CONFIG.historyWindow;
   let vmax = 8;
   for(const q of h) if(q.v>vmax) vmax=q.v;
   vmax = Math.ceil(vmax*1.15*3.6)/3.6; // 留 15% 余量
-  const plotTop = y+30, plotBot = y+hh-14;
+  const plotTop = y+28, plotBot = y+hh-12;
   const px = t => x+18 + (t-tStart)/CONFIG.historyWindow * (w-36);
   const py = v => plotBot - (v/vmax)*(plotBot-plotTop);
   ctx.beginPath();
@@ -628,27 +637,32 @@ function drawCurve(){
 }
 function drawProfile(p){
   if(!S.profile || S.profile.points.length<2) return;
-  const x=LAYOUT_W-36-250, y=314, w=250, hh=78;
+  const x=36, y=640, w=LAYOUT_W-72, hh=65;
   panel(x,y,w,hh,12);
-  label(x+16,y+20,'海拔剖面','rgba(255,255,255,.5)');
+  label(x+16,y+16,'海拔剖面 · 全程','rgba(255,255,255,.5)');
   const pr=S.profile, pts=pr.points;
-  const pt=(i)=>{ const q=pts[i]; return [x+16 + (q[0]-pr.t0)/(pr.t1-pr.t0)*(w-32), y+hh-24 - (q[1]-pr.amin)/(pr.amax-pr.amin)*(hh-40)]; };
+  const plotTop=y+28, plotBot=y+hh-10;
+  const px = t => x+16 + (t-pr.t0)/(pr.t1-pr.t0)*(w-32);
+  const py = a => plotBot - (a-pr.amin)/(pr.amax-pr.amin)*(plotBot-plotTop);
   ctx.beginPath();
-  for(let i=0;i<pts.length;i++){ if(pts[i][1]==null)continue; const [X,Y]=pt(i); i?ctx.lineTo(X,Y):ctx.moveTo(X,Y); }
+  for(let i=0;i<pts.length;i++){ if(pts[i][1]==null)continue; const X=px(pts[i][0]),Y=py(pts[i][1]); i?ctx.lineTo(X,Y):ctx.moveTo(X,Y); }
   ctx.strokeStyle=CONFIG.palette.alt; ctx.lineWidth=2; ctx.stroke();
+  ctx.font='10px Menlo,monospace'; ctx.fillStyle='rgba(255,255,255,.35)'; ctx.textBaseline='middle';
+  ctx.fillText(Math.round(pr.amax)+'m', x+10, plotTop+2);
+  ctx.fillText(Math.round(pr.amin)+'m', x+10, plotBot+2);
   if(p && p.t!=null){
-    const X = x+16 + Math.max(0,Math.min(w-32,(p.t-pr.t0)/(pr.t1-pr.t0)*(w-32)));
-    ctx.beginPath(); ctx.moveTo(X,y+24); ctx.lineTo(X,y+hh-14);
+    const X = Math.max(x+16, Math.min(x+w-16, px(p.t)));
+    ctx.beginPath(); ctx.moveTo(X,plotTop); ctx.lineTo(X,plotBot);
     ctx.strokeStyle='rgba(255,255,255,.6)'; ctx.lineWidth=1.5; ctx.stroke();
     if(p.alt!=null){
-      const Y = y+hh-24 - (p.alt-pr.amin)/(pr.amax-pr.amin)*(hh-40);
+      const Y = py(p.alt);
       ctx.beginPath(); ctx.arc(X,Y,3.5,0,Math.PI*2); ctx.fillStyle='#fff'; ctx.fill();
     }
   }
 }
 function drawMap(p){
   if(!S.track) return;
-  const x=LAYOUT_W-36-250, y=404, w=250, hh=180;
+  const x=LAYOUT_W-36-250, y=250, w=250, hh=300;
   panel(x,y,w,hh,12);
   label(x+16,y+20,'轨迹','rgba(255,255,255,.5)');
   const tr=S.track;
