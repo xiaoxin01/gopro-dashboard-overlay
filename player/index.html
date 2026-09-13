@@ -148,8 +148,9 @@
 const CONFIG = {
   speedUnit: 'kph',      // 'kph' | 'mph'
   distanceUnit: 'km',    // 'km' | 'mi'
-  historyWindow: 120,    // 底部速度曲线时间窗（秒）
+  historyWindow: 600,    // 底部功率曲线时间窗（秒）
   historyStep: 0.25,     // 曲线采样步长（秒）
+  ftp: 195,              // 功能阈值功率（W），用于功率区间着色
   profileStep: 1.0,      // 海拔剖面采样步长（秒）
   palette: { accent:'#3de0c9', warn:'#ffb65c', hr:'#ff6b6b', alt:'#7fb8ff', slope:'#b8e06b', text:'#f4f7f9', dim:'#9aa7b0' },
 };
@@ -332,7 +333,31 @@ function parseData(text, name){
   S.statusBase = name + ' · ' + n.toLocaleString() + ' 点 · ' + fmtDur(span) + (d.meta && d.meta.alignment==='data-only' ? ' · 纯数据模式' : '');
   setStatus(S.statusBase);
   resetTransport();
+  prefillHistory();
   draw();
+}
+/* 重建历史曲线窗口：以数据时间 dataT 为窗口终点，向前取 historyWindow 秒；
+   窗口右端至少延伸到数据开头的一个完整窗口（起点附近也能看到曲线） */
+function rebuildHistoryTo(dataT){
+  S.history = [];
+  if(!S.series || S.series.power==null || !S.series.t || !S.series.t.length) return;
+  const step = CONFIG.historyStep, win = CONFIG.historyWindow;
+  const ts = S.series.t;
+  const dataStart = S.dataStart||0, dataEnd = ts[ts.length-1];
+  const tEnd = Math.min(dataEnd, Math.max(dataT, dataStart + win));
+  const tStart = Math.max(ts[0], tEnd - win);
+  const keep = Math.ceil(win/step);
+  for(let tt = tStart; tt <= tEnd; tt += step){
+    const p = sampleAt(tt);
+    if(!p) continue;
+    S.history.push({t: tt, v: p.power!=null?p.power:0});
+    if(S.history.length>keep) S.history.splice(0, S.history.length-keep);
+  }
+  lastHistT = S.history.length ? S.history[S.history.length-1].t : null;
+}
+/* 数据加载后预填充历史曲线窗口：暂停状态也能看到最近一段曲线 */
+function prefillHistory(){
+  rebuildHistoryTo((S.dataStart||0) + CONFIG.historyWindow);
 }
 function buildProfile(){
   const ts = S.series.t, al = S.series.alt;
@@ -413,6 +438,7 @@ function seekTo(t){
   t = Math.max(0, Math.min(t, duration() || t));
   if(S.hasVideo && video.readyState>=1){ video.currentTime = t; }
   S.virtualT = t;
+  rebuildHistoryTo(playbackDataTime(t));
   S.dirty = true;
 }
 function playbackDataTime(t){
@@ -600,40 +626,85 @@ function drawRightCol(p){
     tile(x,yy,w,54,'温度', p&&p.atemp!=null?fmtNum(p.atemp,0):null, p&&p.atemp!=null?'°C':'', '#d8dee3', p&&p.atemp!=null?fmtNum(p.atemp,0):null);
   }
 }
+/* 功率区间（按 %FTP）→ 颜色：恢复<55%灰 / 有氧耐力 55-75%蓝 / 节奏 76-90%绿 / 阈值 91-105%黄 / VO2max 106-120%橙 / 无氧 121-150%橙红 / 冲刺>150%红 */
+function zoneColor(w){
+  const ftp = CONFIG.ftp || 195;
+  const r = w / ftp;
+  if(r < 0.55) return '#9aa7b0';
+  if(r < 0.76) return '#4a9eff';
+  if(r < 0.91) return '#34d399';
+  if(r < 1.06) return '#ffd75e';
+  if(r < 1.21) return '#ff9a3c';
+  if(r < 1.51) return '#ff6b4a';
+  return '#ff3b3b';
+}
 function drawCurve(){
   const h = S.history;
-  if(h.length<2) return;
   const x=36, y=560, w=LAYOUT_W-72, hh=70;
   panel(x,y,w,hh,12);
-  label(x+16,y+18,'速度 · 最近 ' + CONFIG.historyWindow + 's','rgba(255,255,255,.5)');
-  const tEnd = h[h.length-1].t, tStart = tEnd - CONFIG.historyWindow;
-  let vmax = 8;
-  for(const q of h) if(q.v>vmax) vmax=q.v;
-  vmax = Math.ceil(vmax*1.15*3.6)/3.6; // 留 15% 余量
+  label(x+16,y+18,'功率 · 最近 ' + CONFIG.historyWindow + 's · FTP ' + (CONFIG.ftp||195) + 'W','rgba(255,255,255,.5)');
   const plotTop = y+28, plotBot = y+hh-12;
-  const px = t => x+18 + (t-tStart)/CONFIG.historyWindow * (w-36);
-  const py = v => plotBot - (v/vmax)*(plotBot-plotTop);
-  ctx.beginPath();
-  let started=false;
-  for(const q of h){
-    if(q.t<tStart) continue;
-    const X=px(q.t), Y=py(q.v);
-    if(!started){ ctx.moveTo(X,Y); started=true; } else ctx.lineTo(X,Y);
+  if(h.length<2){
+    ctx.font='11px -apple-system,"PingFang SC",sans-serif';
+    ctx.fillStyle='rgba(255,255,255,.3)'; ctx.textBaseline='middle';
+    ctx.fillText(!S.series || S.series.power==null ? '数据无功率字段，曲线不可用' : '播放后显示功率曲线',
+      x+16, plotTop+(plotBot-plotTop)/2);
+    return;
   }
-  ctx.strokeStyle=CONFIG.palette.accent; ctx.lineWidth=2.5; ctx.lineJoin='round'; ctx.stroke();
-  // 填充渐变
-  ctx.lineTo(px(tEnd), plotBot); ctx.lineTo(px(Math.max(tStart,h[0].t)), plotBot); ctx.closePath();
-  const g = ctx.createLinearGradient(0,plotTop,0,plotBot);
-  g.addColorStop(0,'rgba(61,224,201,.28)'); g.addColorStop(1,'rgba(61,224,201,0)');
-  ctx.fillStyle=g; ctx.fill();
-  // 当前点
-  const cur = h[h.length-1];
-  ctx.beginPath(); ctx.arc(px(cur.t), py(cur.v), 4, 0, Math.PI*2);
+  const win = CONFIG.historyWindow;
+  const nowT = playbackDataTime(currentT());
+  const ts = S.series ? S.series.t : null;
+  const dataStart = S.dataStart||0, dataEnd = ts && ts.length ? ts[ts.length-1] : nowT;
+  const tEnd = Math.min(dataEnd, Math.max(nowT, dataStart + win));
+  const tStart = tEnd - win;
+  let vmax = 50;
+  for(const q of h) if(q.t>=tStart && q.t<=tEnd && q.v>vmax) vmax=q.v;
+  vmax = Math.ceil(vmax*1.15); // 留 15% 余量
+  const px = t => x+18 + (t-tStart)/win * (w-36);
+  const py = v => plotBot - (v/vmax)*(plotBot-plotTop);
+  // 收集窗口内有效点
+  const pts = [];
+  for(const q of h){
+    if(q.t<tStart || q.t>tEnd) continue;
+    pts.push({X: px(q.t), Y: py(q.v), v: q.v});
+  }
+  if(pts.length){
+    // 按功率区间分段着色（同区间合并为一段）
+    const strokeSeg = (a, b) => {
+      ctx.beginPath();
+      ctx.moveTo(pts[a].X, pts[a].Y);
+      for(let i=a+1;i<b;i++) ctx.lineTo(pts[i].X, pts[i].Y);
+      ctx.strokeStyle = zoneColor(pts[a].v);
+      ctx.lineWidth = 2.5; ctx.lineJoin = 'round';
+      ctx.stroke();
+    };
+    let segStart = 0;
+    for(let i=1;i<pts.length;i++){
+      if(zoneColor(pts[i].v) !== zoneColor(pts[segStart].v)){
+        strokeSeg(segStart, i);
+        segStart = i;
+      }
+    }
+    strokeSeg(segStart, pts.length);
+    // 填充渐变（淡化，不抢区间色）
+    ctx.beginPath();
+    ctx.moveTo(pts[0].X, pts[0].Y);
+    for(let i=1;i<pts.length;i++) ctx.lineTo(pts[i].X, pts[i].Y);
+    ctx.lineTo(px(tEnd), plotBot); ctx.lineTo(px(Math.max(tStart,h[0].t)), plotBot); ctx.closePath();
+    const g = ctx.createLinearGradient(0,plotTop,0,plotBot);
+    g.addColorStop(0,'rgba(255,255,255,.07)'); g.addColorStop(1,'rgba(255,255,255,0)');
+    ctx.fillStyle=g; ctx.fill();
+  }
+  // 当前点（游标位置取真实当前时间，clamp 到窗口内）
+  const curT = Math.max(tStart, Math.min(tEnd, nowT));
+  let cv = 0;
+  for(const q of h){ if(q.t<=curT) cv=q.v; else break; }
+  ctx.beginPath(); ctx.arc(px(curT), py(cv), 4, 0, Math.PI*2);
   ctx.fillStyle='#fff'; ctx.fill();
   // 刻度
   ctx.font='10px Menlo,monospace'; ctx.fillStyle='rgba(255,255,255,.35)'; ctx.textBaseline='middle';
   ctx.fillText('0', x+10, plotBot+6);
-  ctx.fillText(fmtNum(U.spd(vmax),0)+' '+U.spdL, x+10, plotTop+2);
+  ctx.fillText(fmtNum(vmax,0)+' W', x+10, plotTop+2);
 }
 function drawProfile(p){
   if(!S.profile || S.profile.points.length<2) return;
@@ -690,11 +761,16 @@ function drawMap(p){
 /* ---------------- 历史曲线数据 ---------------- */
 let lastHistT = null;
 function pushHistory(p){
-  if(!S.series || S.series.speed==null) return;
+  if(!S.series || S.series.power==null) return;
   const now = p.t;
+  if(lastHistT!=null && now < lastHistT - CONFIG.historyStep){
+    // 时间回退（seek 到更早位置）：重建历史窗口
+    rebuildHistoryTo(now);
+    return;
+  }
   if(lastHistT==null || now-lastHistT>=CONFIG.historyStep){
     lastHistT = now;
-    S.history.push({t:now, v: p.speed!=null?p.speed:0});
+    S.history.push({t:now, v: p.power!=null?p.power:0});
     const keep = CONFIG.historyWindow/CONFIG.historyStep;
     if(S.history.length>keep) S.history.splice(0, S.history.length-keep);
   }
