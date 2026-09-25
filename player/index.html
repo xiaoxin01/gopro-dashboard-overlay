@@ -30,6 +30,9 @@
   .stage{position:relative;background:#000;border-radius:10px;overflow:hidden;box-shadow:0 10px 40px rgba(0,0,0,.5);max-width:100%;max-height:100%}
   .stage video,.stage canvas{display:block;width:100%;height:100%;object-fit:contain}
   .stage canvas{position:absolute;inset:0}
+  .stage.layout-edit canvas{cursor:grab}
+  .stage.layout-edit canvas:active{cursor:grabbing}
+  .stage.layout-edit canvas{touch-action:none}
   .empty{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;color:var(--dim);z-index:5;background:radial-gradient(120% 120% at 50% 30%,#10161c 0%,#080b0e 100%);text-align:center;padding:20px}
   .empty.dimmed{pointer-events:none;opacity:0}
   .empty .big{font-size:16px;color:var(--text)}
@@ -151,13 +154,16 @@ const CONFIG = {
   historyWindow: 600,    // 底部功率曲线时间窗（秒）
   historyStep: 0.25,     // 曲线采样步长（秒）
   ftp: 195,              // 功能阈值功率（W），用于功率区间着色
+  speedGaugeMax: 60,     // 速度仪表盘量程（U.spd 单位，如 km/h）
   profileStep: 1.0,      // 海拔剖面采样步长（秒）
+  powerFaceAverageWindow: 10, // 功率表情区间使用最近 N 秒平均功率
   palette: { accent:'#3de0c9', warn:'#ffb65c', hr:'#ff6b6b', alt:'#7fb8ff', slope:'#b8e06b', text:'#f4f7f9', dim:'#9aa7b0' },
 };
 
 /* 每个仪表：{key, label, color, def} —— 可在面板里开关，状态存 localStorage */
 const WIDGETS = [
   { key:'speed',   label:'速度',          color:'#f4f7f9', def:true },
+  { key:'speedgauge', label:'速度仪表',    color:'#3de0c9', def:true },
   { key:'power',   label:'功率',          color:'#ffb65c', def:true },
   { key:'hr',      label:'心率',          color:'#ff6b6b', def:true },
   { key:'cad',     label:'踏频',          color:'#3de0c9', def:true },
@@ -170,6 +176,23 @@ const WIDGETS = [
   { key:'map',     label:'轨迹地图',      color:'#3de0c9', def:true },
 ];
 
+/* 可拖动布局的默认位置（设计坐标 1280×720）。每个仪表独立保存位置。 */
+const LAYOUT_DEFAULTS = {
+  speed:      {x:36,  y:30,  w:250,  h:104},
+  speedgauge: {x:36,  y:250, w:150,  h:177},
+  power:      {x:36,  y:146, w:116,  h:78},
+  hr:         {x:162, y:146, w:116,  h:78},
+  cad:        {x:288, y:146, w:116,  h:78},
+  alt:        {x:994, y:30,  w:250,  h:72},
+  grad:       {x:994, y:114, w:250,  h:54},
+  dist:       {x:994, y:180, w:250,  h:54},
+  atemp:      {x:994, y:246, w:250,  h:54},
+  curve:      {x:36,  y:560, w:1208, h:70},
+  profile:    {x:36,  y:640, w:1208, h:65},
+  map:        {x:994, y:250, w:250,  h:300},
+};
+const LAYOUT_KEYS = Object.keys(LAYOUT_DEFAULTS);
+
 /* ---------------- 状态 ---------------- */
 const S = {
   data:null, series:null, fields:[], profile:null, track:null,
@@ -178,6 +201,12 @@ const S = {
   dataStart:0, dataDuration:0,
   widgets:{}, history:[], dirty:true,
   offset:0, offsetKey:null, offsetSegments:null,
+  layout:{}, layoutEdit:false, draggingLayout:null,
+  cadencePhase:0, cadenceT:null,
+  heartPhase:0, heartT:null,
+  powerFaceZone:null, powerFaceAnimating:false,
+  powerBreathPhase:0, powerBreathT:null,
+  powerFaceSamples:[], powerFaceSampleT:null,
 };
 function loadWidgetPrefs(){
   const prefs = {};
@@ -187,6 +216,22 @@ function loadWidgetPrefs(){
   WIDGETS.forEach(w => S.widgets[w.key] = prefs[w.key]==null ? w.def : prefs[w.key]==='1');
 }
 loadWidgetPrefs();
+function loadLayoutPrefs(){
+  let saved = {};
+  try{ saved = JSON.parse(localStorage.getItem('dashboard-layout') || '{}'); }catch(e){}
+  LAYOUT_KEYS.forEach(key=>{
+    const d = LAYOUT_DEFAULTS[key], p = saved[key] || {};
+    S.layout[key] = {
+      x: Number.isFinite(p.x) ? p.x : d.x,
+      y: Number.isFinite(p.y) ? p.y : d.y,
+      w: d.w, h: d.h,
+    };
+  });
+}
+function saveLayoutPrefs(){
+  try{ localStorage.setItem('dashboard-layout', JSON.stringify(S.layout)); }catch(e){}
+}
+loadLayoutPrefs();
 
 /* ---------------- DOM ---------------- */
 const $ = id => document.getElementById(id);
@@ -267,6 +312,22 @@ function videoTimeToDataTime(vt){
   }
   return vt + S.offset;
 }
+/* 数据时间 → 视频时间：用于点击功率条反向寻时。 */
+function dataTimeToVideoTime(dt){
+  if(!S.hasVideo) return dt - S.dataStart;
+  if(S.offsetSegments && S.offsetSegments.length){
+    let seg = S.offsetSegments[0];
+    for(let i=0;i<S.offsetSegments.length;i++){
+      const s=S.offsetSegments[i];
+      const start=s.video_start_s+s.offset_s+S.offset;
+      const end=start+s.duration_s;
+      if(dt>=start && dt<=end){ seg=s; break; }
+      if(dt>=start) seg=s;
+    }
+    return dt-seg.offset_s-S.offset;
+  }
+  return dt-S.offset;
+}
 /* 当前 segment 的基础 offset（不含用户微调），用于 UI 显示 */
 function currentBaseOffset(vt){
   if(S.offsetSegments && S.offsetSegments.length){
@@ -336,16 +397,20 @@ function parseData(text, name){
   prefillHistory();
   draw();
 }
-/* 重建历史曲线窗口：以数据时间 dataT 为窗口终点，向前取 historyWindow 秒；
-   窗口右端至少延伸到数据开头的一个完整窗口（起点附近也能看到曲线） */
+/* 重建功率曲线窗口：以数据时间 dataT 为中心，前后各取一半窗口；
+   在数据起点/终点附近自动贴边，避免出现空白区域 */
 function rebuildHistoryTo(dataT){
   S.history = [];
   if(!S.series || S.series.power==null || !S.series.t || !S.series.t.length) return;
   const step = CONFIG.historyStep, win = CONFIG.historyWindow;
   const ts = S.series.t;
   const dataStart = S.dataStart||0, dataEnd = ts[ts.length-1];
-  const tEnd = Math.min(dataEnd, Math.max(dataT, dataStart + win));
-  const tStart = Math.max(ts[0], tEnd - win);
+  let tStart = Math.max(dataStart, dataT - win / 2);
+  let tEnd = Math.min(dataEnd, dataT + win / 2);
+  if(tEnd - tStart < win){
+    if(tStart <= dataStart) tEnd = Math.min(dataEnd, dataStart + win);
+    else if(tEnd >= dataEnd) tStart = Math.max(dataStart, dataEnd - win);
+  }
   const keep = Math.ceil(win/step);
   for(let tt = tStart; tt <= tEnd; tt += step){
     const p = sampleAt(tt);
@@ -353,11 +418,12 @@ function rebuildHistoryTo(dataT){
     S.history.push({t: tt, v: p.power!=null?p.power:0});
     if(S.history.length>keep) S.history.splice(0, S.history.length-keep);
   }
-  lastHistT = S.history.length ? S.history[S.history.length-1].t : null;
+  // 这里记录的是窗口中心，而不是历史数组的末尾时间。
+  lastHistT = dataT;
 }
 /* 数据加载后预填充历史曲线窗口：暂停状态也能看到最近一段曲线 */
 function prefillHistory(){
-  rebuildHistoryTo((S.dataStart||0) + CONFIG.historyWindow);
+  rebuildHistoryTo((S.dataStart||0) + CONFIG.historyWindow / 2);
 }
 function buildProfile(){
   const ts = S.series.t, al = S.series.alt;
@@ -506,6 +572,13 @@ window.addEventListener('resize', ()=>{
 
 /* ---------------- 绘制：仪表盘 ---------------- */
 const LAYOUT_W = 1280, LAYOUT_H = 720; // 设计基准，坐标按此缩放；非 16:9 视频时仪表垂直居中
+function drawWidgetAt(key, fn){
+  const p = S.layout[key], d = LAYOUT_DEFAULTS[key];
+  ctx.save();
+  ctx.translate(p.x - d.x, p.y - d.y);
+  fn();
+  ctx.restore();
+}
 function draw(){
   if(!stage.clientWidth) return;
   const dpr = window.devicePixelRatio || 1;
@@ -518,6 +591,7 @@ function draw(){
   ctx.save();
   ctx.translate(ox, oy);
   ctx.scale(s,s);
+  S.powerFaceAnimating=false;
 
   const p = sampleAt(playbackDataTime(currentT()));
   if(p){ pushHistory(p); }
@@ -536,15 +610,21 @@ function draw(){
     }
   }
 
-  if(S.widgets.speed)  drawSpeed(p);
-  if(S.widgets.power || S.widgets.hr || S.widgets.cad) drawLeftRow(p);
-  if(S.widgets.alt || S.widgets.grad || S.widgets.dist || S.widgets.atemp) drawRightCol(p);
-  if(S.widgets.curve)  drawCurve();
-  if(S.widgets.profile)drawProfile(p);
-  if(S.widgets.map)    drawMap(p);
+  if(S.widgets.speed) drawWidgetAt('speed', ()=>drawSpeed(p));
+  if(S.widgets.speedgauge) drawWidgetAt('speedgauge', ()=>drawSpeedGauge(p));
+  if(S.widgets.power) drawWidgetAt('power', ()=>drawPower(p));
+  if(S.widgets.hr) drawWidgetAt('hr', ()=>drawHr(p));
+  if(S.widgets.cad) drawWidgetAt('cad', ()=>drawCad(p));
+  if(S.widgets.alt) drawWidgetAt('alt', ()=>drawAlt(p));
+  if(S.widgets.grad) drawWidgetAt('grad', ()=>drawGrad(p));
+  if(S.widgets.dist) drawWidgetAt('dist', ()=>drawDist(p));
+  if(S.widgets.atemp) drawWidgetAt('atemp', ()=>drawAtemp(p));
+  if(S.widgets.curve) drawWidgetAt('curve', drawCurve);
+  if(S.widgets.profile) drawWidgetAt('profile', ()=>drawProfile(p));
+  if(S.widgets.map) drawWidgetAt('map', ()=>drawMap(p));
 
   ctx.restore();
-  S.dirty = false;
+  S.dirty = S.powerFaceAnimating;
 }
 function panel(x,y,w,h,r){
   ctx.beginPath();
@@ -590,64 +670,278 @@ function drawSpeed(p){
     ctx.fillText(p.lat.toFixed(5)+', '+p.lon.toFixed(5), x+20, y+88);
   }
 }
+/* 速度表盘（参考原渲染器 CairoGaugeRoundAnnotated：254° 弧形刻度 + 指针） */
+function drawSpeedGauge(p){
+  // 紧凑版速度仪表：约为原尺寸的三分之一，释放左侧中部空间。
+  // 旋转中心位于底部，刻度弧线布置在中心上方。
+  const cx=111, cy=355, r=63;
+  const vMax = CONFIG.speedGaugeMax || 60;
+  panel(cx-r-9, cy-r-9, (r+9)*2, (r+9)*2, 14);
+  // 从左侧开始沿上方半圆顺时针旋转：0 在 180°，最大值在 360°（0°）。
+  const a0 = Math.PI, a1 = Math.PI * 2;
+  // 紧凑刻度：减少刻度数量，避免文字挤占空间。
+  const sectors = 8;
+  for(let i=0;i<=sectors;i++){
+    const ang = a0 + (a1-a0)*i/sectors;
+    const major = i%2===0;
+    const r1 = r-(major?10:6), r2 = r-17;
+    ctx.beginPath();
+    ctx.moveTo(cx+Math.cos(ang)*r1, cy+Math.sin(ang)*r1);
+    ctx.lineTo(cx+Math.cos(ang)*r2, cy+Math.sin(ang)*r2);
+    ctx.strokeStyle = major ? 'rgba(255,255,255,.55)' : 'rgba(255,255,255,.22)';
+    ctx.lineWidth = major?1.5:1;
+    ctx.stroke();
+    if(major){
+      ctx.font='700 12px Menlo,Consolas,monospace';
+      ctx.fillStyle='rgba(255,255,255,.65)';
+      ctx.textAlign='center'; ctx.textBaseline='middle';
+      const tr = r-27;
+      ctx.fillText(String(Math.round(vMax*i/sectors)), cx+Math.cos(ang)*tr, cy+Math.sin(ang)*tr);
+    }
+  }
+  // 指针
+  const spd = p && p.speed!=null ? p.speed : 0;
+  const frac = Math.max(0, Math.min(1, U.spd(spd)/vMax));
+  const ang = a0 + (a1-a0)*frac;
+  ctx.beginPath();
+  ctx.moveTo(cx+Math.cos(ang)*(r-12), cy+Math.sin(ang)*(r-12));
+  ctx.lineTo(cx-Math.cos(ang)*10, cy-Math.sin(ang)*10);
+  ctx.strokeStyle = CONFIG.palette.accent;
+  ctx.lineWidth=3.75; ctx.lineCap='round';
+  ctx.stroke();
+  ctx.beginPath(); ctx.arc(cx, cy, 4.5, 0, Math.PI*2); ctx.fillStyle=CONFIG.palette.accent; ctx.fill();
+  // 数值放在底部支点下方。
+  ctx.font='600 12px -apple-system,sans-serif';
+  ctx.fillStyle=CONFIG.palette.dim;
+  ctx.fillText(U.spdL, cx, cy+20);
+  ctx.font='700 27px Menlo,Consolas,monospace';
+  ctx.fillStyle=CONFIG.palette.text;
+  ctx.fillText(spd!=null?U.spd(spd).toFixed(1):'--', cx, cy+48);
+  ctx.textAlign='left';
+}
 function tile(x,y,w,h,title,value,unit,color,vs){
   panel(x,y,w,h,12);
   label(x+14,y+22,title,'rgba(255,255,255,.5)');
   bigNum(x+14,y+50, vs!=null?vs:'--', color, 30);
   if(unit){ ctx.font='12px -apple-system,sans-serif'; ctx.fillStyle='rgba(255,255,255,.5)'; ctx.textBaseline='middle'; ctx.fillText(unit, x+14+(vs? vs.length*17+10:30), y+50); }
 }
-function drawLeftRow(p){
-  const y=146, w=116, h=78, gap=10, x0=36;
-  let xi=x0;
-  if(S.widgets.power){ tile(xi,y,w,h,'功率', p&&p.power!=null?fmtNum(p.power,0):null, p&&p.power!=null?'W':'', CONFIG.palette.warn, p&&p.power!=null?fmtNum(p.power,0):null); xi+=w+gap; }
-  if(S.widgets.hr){ tile(xi,y,w,h,'心率', p&&p.hr!=null?fmtNum(p.hr,0):null, p&&p.hr!=null?'bpm':'', CONFIG.palette.hr, p&&p.hr!=null?fmtNum(p.hr,0):null); xi+=w+gap; }
-  if(S.widgets.cad){ tile(xi,y,w,h,'踏频', p&&p.cad!=null?fmtNum(p.cad,0):null, p&&p.cad!=null?'rpm':'', CONFIG.palette.accent, p&&p.cad!=null?fmtNum(p.cad,0):null); }
+function drawPower(p){
+  const instantPower=p&&p.power!=null?p.power:null;
+  tile(36,146,116,78,'功率', instantPower!=null?fmtNum(instantPower,0):null,
+    instantPower!=null?'W':'', CONFIG.palette.warn, instantPower!=null?fmtNum(instantPower,0):null);
+  drawPowerFace(132,187,averagePowerForFace(p),p);
 }
-function drawRightCol(p){
-  const x = LAYOUT_W - 36 - 250, y=30, w=250;
-  let yy=y;
-  if(S.widgets.alt){
-    panel(x,yy,w,72,12);
-    label(x+16,yy+20,'海拔','rgba(255,255,255,.5)');
-    if(p&&p.alt!=null){ bigNum(x+16,yy+48, fmtNum(p.alt,0), CONFIG.palette.alt, 30);
-      ctx.font='12px -apple-system,sans-serif'; ctx.fillStyle='rgba(255,255,255,.5)'; ctx.textBaseline='middle'; ctx.fillText('m', x+76, yy+48); }
-    else bigNum(x+16,yy+48,'--', CONFIG.palette.dim, 30);
-    yy += 84;
+function averagePowerForFace(p){
+  if(!p || p.power==null || !Number.isFinite(Number(p.t))) return null;
+  const t=Number(p.t), value=Number(p.power);
+  if(S.powerFaceSampleT!=null && t<S.powerFaceSampleT){
+    S.powerFaceSamples=[];
+    S.powerFaceSampleT=null;
   }
-  if(S.widgets.grad){
-    tile(x,yy,w,54,'坡度', p&&p.grad!=null?fmtNum(p.grad,1):null, p&&p.grad!=null?'%':'', CONFIG.palette.slope, p&&p.grad!=null?fmtNum(p.grad,1):null);
-    yy += 66;
+  if(S.powerFaceSampleT==null || t>S.powerFaceSampleT){
+    S.powerFaceSamples.push({t,v:value});
+    S.powerFaceSampleT=t;
   }
-  if(S.widgets.dist){
-    tile(x,yy,w,54,'距离', p&&p.odo!=null?fmtNum(U.dist(p.odo),2):null, p&&p.odo!=null?U.distL:'', '#f4f7f9', p&&p.odo!=null?fmtNum(U.dist(p.odo),2):null);
-    yy += 66;
+  const start=t-CONFIG.powerFaceAverageWindow;
+  S.powerFaceSamples=S.powerFaceSamples.filter(sample=>sample.t>=start);
+  if(!S.powerFaceSamples.length) return value;
+  return S.powerFaceSamples.reduce((sum,sample)=>sum+sample.v,0)/S.powerFaceSamples.length;
+}
+function drawPowerFace(x,y,power,p){
+  const target=power==null ? 0 : zoneIdx(power);
+  if(S.powerFaceZone==null) S.powerFaceZone=target;
+  const delta=target-S.powerFaceZone;
+  if(Math.abs(delta)>0.01){
+    // 约 300ms 的区间过渡；即使暂停，也通过 S.dirty 继续绘制动画。
+    S.powerFaceZone += delta*0.12;
+    S.powerFaceAnimating=true;
+  }else S.powerFaceZone=target;
+  const zone=Math.max(0,Math.min(ZONES.length-1,S.powerFaceZone));
+  const lo=Math.floor(zone), hi=Math.min(ZONES.length-1,lo+1), mix=zone-lo;
+  const color=mixHexColor(ZONES[lo].color,ZONES[hi].color,mix);
+  const faceLo=FACE_STYLES[lo], faceHi=FACE_STYLES[hi];
+  const smile=lerp(faceLo.smile,faceHi.smile,mix);
+  const open=lerp(faceLo.open,faceHi.open,mix);
+  const brow=lerp(faceLo.brow,faceHi.brow,mix);
+  ctx.save();
+  ctx.translate(x,y);
+  ctx.fillStyle=color;
+  ctx.beginPath(); ctx.arc(0,0,12,0,Math.PI*2); ctx.fill();
+
+  // 眼睛和眉毛也连续过渡，避免跨区间时突然变脸。
+  ctx.strokeStyle='#10161c'; ctx.fillStyle='#10161c'; ctx.lineWidth=1.5; ctx.lineCap='round';
+  ctx.beginPath();
+  ctx.moveTo(-7,-5+brow); ctx.lineTo(-2,-7+brow);
+  ctx.moveTo(2,-7+brow); ctx.lineTo(7,-5+brow); ctx.stroke();
+  ctx.beginPath(); ctx.arc(-4,-3,1.4,0,Math.PI*2); ctx.arc(4,-3,1.4,0,Math.PI*2); ctx.fill();
+
+  // 表情：微笑逐渐变为张嘴/咬牙。
+  ctx.beginPath();
+  if(open>0.15){
+    // 高功率区持续大口呼吸；区间越高，呼吸频率越快。
+    const breathHz=lerp(0.8,2.4,zone/(ZONES.length-1));
+    const breath=0.5+0.5*Math.sin(updatePowerBreath(breathHz));
+    const mouthOpen=1.5+open*1.2+breath*(0.8+open*1.5);
+    ctx.ellipse(0,5,3+breath*0.6,mouthOpen,0,0,Math.PI*2);
+    S.powerFaceAnimating=true;
+  }else { ctx.moveTo(-5,4); ctx.quadraticCurveTo(0,4+smile,5,4); }
+  ctx.strokeStyle='#10161c'; ctx.lineWidth=1.7; ctx.stroke();
+  ctx.restore();
+}
+function updatePowerBreath(frequency){
+  const now=performance.now()/1000;
+  if(S.powerBreathT==null){
+    S.powerBreathT=now;
+    return S.powerBreathPhase;
   }
-  if(S.widgets.atemp){
-    tile(x,yy,w,54,'温度', p&&p.atemp!=null?fmtNum(p.atemp,0):null, p&&p.atemp!=null?'°C':'', '#d8dee3', p&&p.atemp!=null?fmtNum(p.atemp,0):null);
+  const dt=Math.min(0.1,Math.max(0,now-S.powerBreathT));
+  S.powerBreathPhase += dt*frequency*Math.PI*2;
+  S.powerBreathPhase %= Math.PI*2;
+  S.powerBreathT=now;
+  return S.powerBreathPhase;
+}
+function lerp(a,b,t){ return a+(b-a)*t; }
+const FACE_STYLES = [
+  {smile:0, open:0, brow:0},
+  {smile:2, open:0, brow:0},
+  {smile:4, open:0, brow:0},
+  {smile:0, open:0, brow:0},
+  {smile:-1, open:.45, brow:1},
+  {smile:-2, open:.7, brow:2},
+  {smile:0, open:1, brow:2},
+];
+function mixHexColor(a,b,t){
+  const parse=s=>{
+    const n=parseInt(s.slice(1),16);
+    return [(n>>16)&255,(n>>8)&255,n&255];
+  };
+  const aa=parse(a), bb=parse(b), c=aa.map((v,i)=>Math.round(v+(bb[i]-v)*t));
+  return 'rgb('+c.join(',')+')';
+}
+function drawHr(p){
+  tile(162,146,116,78,'心率', p&&p.hr!=null?fmtNum(p.hr,0):null,
+    p&&p.hr!=null?'bpm':'', CONFIG.palette.hr, p&&p.hr!=null?fmtNum(p.hr,0):null);
+  if(p && p.hr!=null){
+    const phase=updateHeartPhase(p);
+    const beat=Math.pow(Math.max(0,Math.sin(phase)),8);
+    drawHeartIcon(254,187,1+beat*0.18);
   }
 }
-/* 功率区间（按 %FTP）→ 颜色：恢复<55%灰 / 有氧耐力 55-75%蓝 / 节奏 76-90%绿 / 阈值 91-105%黄 / VO2max 106-120%橙 / 无氧 121-150%橙红 / 冲刺>150%红 */
-function zoneColor(w){
+function updateHeartPhase(p){
+  const t=Number(p.t);
+  const bpm=Math.max(30,Math.min(240,Number(p.hr)||0));
+  if(!Number.isFinite(t) || S.heartT==null || t<S.heartT || t-S.heartT>2){
+    S.heartT=t;
+    return S.heartPhase;
+  }
+  const dt=t-S.heartT;
+  S.heartPhase += dt*(bpm/60)*Math.PI*2;
+  S.heartPhase %= Math.PI*2;
+  S.heartT=t;
+  return S.heartPhase;
+}
+function drawHeartIcon(x,y,scale){
+  ctx.save();
+  ctx.translate(x,y);
+  ctx.scale(scale,scale);
+  ctx.fillStyle='rgba(255,107,107,.9)';
+  ctx.beginPath();
+  ctx.moveTo(0,10);
+  ctx.bezierCurveTo(-3,7,-12,1,-12,-5);
+  ctx.bezierCurveTo(-12,-11,-4,-13,0,-7);
+  ctx.bezierCurveTo(4,-13,12,-11,12,-5);
+  ctx.bezierCurveTo(12,1,3,7,0,10);
+  ctx.closePath();
+  ctx.fill();
+  ctx.restore();
+}
+function drawCad(p){
+  tile(288,146,116,78,'踏频', p&&p.cad!=null?fmtNum(p.cad,0):null,
+    p&&p.cad!=null?'rpm':'', CONFIG.palette.accent, p&&p.cad!=null?fmtNum(p.cad,0):null);
+  if(p && p.cad!=null){
+    const cx=380, cy=187, orbit=12;
+    const phase=updateCadencePhase(p);
+    drawFootprint(cx+Math.cos(phase)*orbit, cy+Math.sin(phase)*orbit, phase);
+    drawFootprint(cx+Math.cos(phase+Math.PI)*orbit, cy+Math.sin(phase+Math.PI)*orbit, phase+Math.PI);
+  }
+}
+function updateCadencePhase(p){
+  const t=Number(p.t);
+  const rpm=Math.max(0,Math.min(250,Number(p.cad)||0));
+  if(!Number.isFinite(t) || S.cadenceT==null || t<S.cadenceT || t-S.cadenceT>2){
+    S.cadenceT=t;
+    return S.cadencePhase;
+  }
+  const dt=t-S.cadenceT;
+  S.cadencePhase += dt*(rpm/60)*Math.PI*2;
+  S.cadencePhase %= Math.PI*2;
+  S.cadenceT=t;
+  return S.cadencePhase;
+}
+function drawFootprint(x,y,angle){
+  ctx.save();
+  ctx.translate(x,y);
+  ctx.rotate(angle);
+  ctx.fillStyle='rgba(61,224,201,.82)';
+  // 足掌
+  ctx.beginPath();
+  ctx.ellipse(0,2,3.5,7,0,0,Math.PI*2);
+  ctx.fill();
+  // 四个脚趾
+  [[-3,-7,1.4],[-1,-9,1.6],[1,-9,1.6],[3,-7,1.3]].forEach(([tx,ty,r])=>{
+    ctx.beginPath(); ctx.arc(tx,ty,r,0,Math.PI*2); ctx.fill();
+  });
+  ctx.restore();
+}
+function drawAlt(p){
+  const x=994, y=30, w=250;
+  panel(x,y,w,72,12);
+  label(x+16,y+20,'海拔','rgba(255,255,255,.5)');
+  if(p&&p.alt!=null){
+    bigNum(x+16,y+48,fmtNum(p.alt,0),CONFIG.palette.alt,30);
+    ctx.font='12px -apple-system,sans-serif'; ctx.fillStyle='rgba(255,255,255,.5)';
+    ctx.textBaseline='middle'; ctx.fillText('m',x+76,y+48);
+  }else bigNum(x+16,y+48,'--',CONFIG.palette.dim,30);
+}
+function drawGrad(p){
+  tile(994,114,250,54,'坡度',p&&p.grad!=null?fmtNum(p.grad,1):null,
+    p&&p.grad!=null?'%':'',CONFIG.palette.slope,p&&p.grad!=null?fmtNum(p.grad,1):null);
+}
+function drawDist(p){
+  tile(994,180,250,54,'距离',p&&p.odo!=null?fmtNum(U.dist(p.odo),2):null,
+    p&&p.odo!=null?U.distL:'',CONFIG.palette.text,p&&p.odo!=null?fmtNum(U.dist(p.odo),2):null);
+}
+function drawAtemp(p){
+  tile(994,246,250,54,'温度',p&&p.atemp!=null?fmtNum(p.atemp,0):null,
+    p&&p.atemp!=null?'°C':'','#d8dee3',p&&p.atemp!=null?fmtNum(p.atemp,0):null);
+}
+/* 功率区间（按 %FTP）：恢复<55%灰 / 有氧耐力 55-75%蓝 / 节奏 76-90%绿 / 阈值 91-105%黄 / VO2max 106-120%橙 / 无氧 121-150%橙红 / 冲刺>150%红 */
+const ZONES = [
+  {name:'恢复',   color:'#9aa7b0', max:0.55},
+  {name:'有氧耐力',color:'#4a9eff', max:0.76},
+  {name:'节奏',   color:'#34d399', max:0.91},
+  {name:'阈值',   color:'#ffd75e', max:1.06},
+  {name:'VO2max', color:'#ff9a3c', max:1.21},
+  {name:'无氧',   color:'#ff6b4a', max:1.51},
+  {name:'冲刺',   color:'#ff3b3b', max:Infinity}
+];
+function zoneIdx(w){
   const ftp = CONFIG.ftp || 195;
   const r = w / ftp;
-  if(r < 0.55) return '#9aa7b0';
-  if(r < 0.76) return '#4a9eff';
-  if(r < 0.91) return '#34d399';
-  if(r < 1.06) return '#ffd75e';
-  if(r < 1.21) return '#ff9a3c';
-  if(r < 1.51) return '#ff6b4a';
-  return '#ff3b3b';
+  for(let i=0;i<ZONES.length;i++) if(r < ZONES[i].max) return i;
+  return 6;
 }
+function zoneColor(w){ return ZONES[zoneIdx(w)].color; }
 function drawCurve(){
   const h = S.history;
   const x=36, y=560, w=LAYOUT_W-72, hh=70;
   panel(x,y,w,hh,12);
-  label(x+16,y+18,'功率 · 最近 ' + CONFIG.historyWindow + 's · FTP ' + (CONFIG.ftp||195) + 'W','rgba(255,255,255,.5)');
+  label(x+16,y+18,'功率区间 · 前后各 ' + (CONFIG.historyWindow/2) + 's · FTP ' + (CONFIG.ftp||195) + 'W','rgba(255,255,255,.5)');
   const plotTop = y+28, plotBot = y+hh-12;
   if(h.length<2){
     ctx.font='11px -apple-system,"PingFang SC",sans-serif';
     ctx.fillStyle='rgba(255,255,255,.3)'; ctx.textBaseline='middle';
-    ctx.fillText(!S.series || S.series.power==null ? '数据无功率字段，曲线不可用' : '播放后显示功率曲线',
+    ctx.fillText(!S.series || S.series.power==null ? '数据无功率字段，曲线不可用' : '播放后显示功率区间分布',
       x+16, plotTop+(plotBot-plotTop)/2);
     return;
   }
@@ -655,56 +949,57 @@ function drawCurve(){
   const nowT = playbackDataTime(currentT());
   const ts = S.series ? S.series.t : null;
   const dataStart = S.dataStart||0, dataEnd = ts && ts.length ? ts[ts.length-1] : nowT;
-  const tEnd = Math.min(dataEnd, Math.max(nowT, dataStart + win));
-  const tStart = tEnd - win;
-  let vmax = 50;
-  for(const q of h) if(q.t>=tStart && q.t<=tEnd && q.v>vmax) vmax=q.v;
-  vmax = Math.ceil(vmax*1.15); // 留 15% 余量
+  let tStart = Math.max(dataStart, nowT - win / 2);
+  let tEnd = Math.min(dataEnd, nowT + win / 2);
+  if(tEnd - tStart < win){
+    if(tStart <= dataStart) tEnd = Math.min(dataEnd, dataStart + win);
+    else if(tEnd >= dataEnd) tStart = Math.max(dataStart, dataEnd - win);
+  }
   const px = t => x+18 + (t-tStart)/win * (w-36);
-  const py = v => plotBot - (v/vmax)*(plotBot-plotTop);
-  // 收集窗口内有效点
-  const pts = [];
+  // 窗口内点 + 各区间累计时长
+  const pts = [], zoneSec = [0,0,0,0,0,0,0];
+  let prevT = null, prevZ = null;
   for(const q of h){
     if(q.t<tStart || q.t>tEnd) continue;
-    pts.push({X: px(q.t), Y: py(q.v), v: q.v});
+    const z = zoneIdx(q.v);
+    pts.push({X: px(q.t), v: q.v, z});
+    if(prevT!=null) zoneSec[prevZ] += q.t - prevT;
+    prevT = q.t; prevZ = z;
   }
-  if(pts.length){
-    // 按功率区间分段着色（同区间合并为一段）
-    const strokeSeg = (a, b) => {
-      ctx.beginPath();
-      ctx.moveTo(pts[a].X, pts[a].Y);
-      for(let i=a+1;i<b;i++) ctx.lineTo(pts[i].X, pts[i].Y);
-      ctx.strokeStyle = zoneColor(pts[a].v);
-      ctx.lineWidth = 2.5; ctx.lineJoin = 'round';
-      ctx.stroke();
-    };
-    let segStart = 0;
-    for(let i=1;i<pts.length;i++){
-      if(zoneColor(pts[i].v) !== zoneColor(pts[segStart].v)){
-        strokeSeg(segStart, i);
-        segStart = i;
-      }
-    }
-    strokeSeg(segStart, pts.length);
-    // 填充渐变（淡化，不抢区间色）
-    ctx.beginPath();
-    ctx.moveTo(pts[0].X, pts[0].Y);
-    for(let i=1;i<pts.length;i++) ctx.lineTo(pts[i].X, pts[i].Y);
-    ctx.lineTo(px(tEnd), plotBot); ctx.lineTo(px(Math.max(tStart,h[0].t)), plotBot); ctx.closePath();
-    const g = ctx.createLinearGradient(0,plotTop,0,plotBot);
-    g.addColorStop(0,'rgba(255,255,255,.07)'); g.addColorStop(1,'rgba(255,255,255,0)');
-    ctx.fillStyle=g; ctx.fill();
+  if(prevT!=null && tEnd>prevT) zoneSec[prevZ] += tEnd - prevT; // 尾段
+  // 堆叠条：按时间逐点着色（每段宽度=采样间隔，颜色=所在 FTP 区间）
+  const barY = plotTop+5, barH = 14;
+  for(let i=0;i<pts.length;i++){
+    const X0 = i ? pts[i-1].X : px(tStart);
+    const X1 = i<pts.length-1 ? pts[i+1].X : px(tEnd);
+    ctx.fillStyle = ZONES[pts[i].z].color;
+    ctx.fillRect(X0, barY, Math.max(1, X1-X0-0.5), barH);
   }
-  // 当前点（游标位置取真实当前时间，clamp 到窗口内）
+  // 当前游标
   const curT = Math.max(tStart, Math.min(tEnd, nowT));
+  ctx.fillStyle='rgba(255,255,255,.85)';
+  ctx.fillRect(px(curT)-1, barY-4, 2, barH+8);
+  // 当前功率 + 区间名（右侧）
   let cv = 0;
   for(const q of h){ if(q.t<=curT) cv=q.v; else break; }
-  ctx.beginPath(); ctx.arc(px(curT), py(cv), 4, 0, Math.PI*2);
-  ctx.fillStyle='#fff'; ctx.fill();
-  // 刻度
-  ctx.font='10px Menlo,monospace'; ctx.fillStyle='rgba(255,255,255,.35)'; ctx.textBaseline='middle';
-  ctx.fillText('0', x+10, plotBot+6);
-  ctx.fillText(fmtNum(vmax,0)+' W', x+10, plotTop+2);
+  ctx.font='700 20px Menlo,Consolas,monospace'; ctx.fillStyle='#fff'; ctx.textAlign='right';
+  ctx.fillText(fmtNum(cv,0)+' W', x+w-14, barY+2);
+  const zi = zoneIdx(cv);
+  ctx.font='600 11px -apple-system,"PingFang SC",sans-serif';
+  ctx.fillStyle = ZONES[zi].color;
+  ctx.fillText(ZONES[zi].name, x+w-14, barY+18);
+  ctx.textAlign='left';
+  // 各区间累计时长（颜色块 + mm:ss）
+  const fmtDur = s => { const m=Math.floor(s/60), ss=Math.round(s%60); return m+':'+(ss<10?'0':'')+ss; };
+  const segW = (w-36)/7;
+  for(let i=0;i<7;i++){
+    const bx = x+18 + segW*i;
+    ctx.fillStyle = ZONES[i].color;
+    ctx.fillRect(bx, plotBot-9, 8, 8);
+    ctx.font='10px Menlo,Consolas,monospace';
+    ctx.fillStyle='rgba(255,255,255,.5)';
+    ctx.fillText(fmtDur(zoneSec[i]), bx+11, plotBot-2);
+  }
 }
 function drawProfile(p){
   if(!S.profile || S.profile.points.length<2) return;
@@ -763,16 +1058,9 @@ let lastHistT = null;
 function pushHistory(p){
   if(!S.series || S.series.power==null) return;
   const now = p.t;
-  if(lastHistT!=null && now < lastHistT - CONFIG.historyStep){
-    // 时间回退（seek 到更早位置）：重建历史窗口
+  // 当前点移动一个采样步长后，重建以当前点为中心的窗口。
+  if(lastHistT==null || Math.abs(now-lastHistT)>=CONFIG.historyStep){
     rebuildHistoryTo(now);
-    return;
-  }
-  if(lastHistT==null || now-lastHistT>=CONFIG.historyStep){
-    lastHistT = now;
-    S.history.push({t:now, v: p.power!=null?p.power:0});
-    const keep = CONFIG.historyWindow/CONFIG.historyStep;
-    if(S.history.length>keep) S.history.splice(0, S.history.length-keep);
   }
 }
 
@@ -877,6 +1165,33 @@ function buildPanel(){
     lab.appendChild(cb);
     body.appendChild(lab);
   });
+
+  const layoutSep = document.createElement('hr'); layoutSep.className='p-sep'; body.appendChild(layoutSep);
+  const layoutTitle = document.createElement('h4'); layoutTitle.textContent='仪表位置'; body.appendChild(layoutTitle);
+  const layoutRow = document.createElement('div'); layoutRow.className='offset-row';
+  const layoutBtn = document.createElement('button'); layoutBtn.className='off-btn';
+  layoutBtn.textContent = '开始拖动';
+  layoutBtn.addEventListener('click', ()=>{
+    S.layoutEdit = !S.layoutEdit;
+    stage.classList.toggle('layout-edit', S.layoutEdit);
+    layoutBtn.textContent = S.layoutEdit ? '完成拖动' : '开始拖动';
+    setStatus(S.layoutEdit ? '布局编辑：拖动仪表调整位置' : (S.statusBase || ''));
+    S.dirty = true;
+  });
+  const resetLayoutBtn = document.createElement('button'); resetLayoutBtn.className='off-btn';
+  resetLayoutBtn.textContent='恢复默认';
+  resetLayoutBtn.addEventListener('click', ()=>{
+    LAYOUT_KEYS.forEach(key=>{
+      const d = LAYOUT_DEFAULTS[key];
+      S.layout[key] = {x:d.x, y:d.y, w:d.w, h:d.h};
+    });
+    saveLayoutPrefs(); S.dirty = true;
+  });
+  layoutRow.appendChild(layoutBtn); layoutRow.appendChild(resetLayoutBtn); body.appendChild(layoutRow);
+  const layoutNote = document.createElement('div'); layoutNote.className='note';
+  layoutNote.textContent='开启后直接拖动画布上的单个仪表；取消勾选即可隐藏，位置会自动保存。';
+  body.appendChild(layoutNote);
+
   const note = document.createElement('div');
   note.className='note';
   note.innerHTML='配置在页面顶部 <code>CONFIG</code> 里：速度单位、曲线时长、颜色。<br>改完刷新即生效，视频原片零渲染。';
@@ -898,6 +1213,88 @@ $('btnPlay').addEventListener('click', togglePlay);
 $('seek').addEventListener('input', e=>{ const r=e.target; r.mousedown=true; });
 $('seek').addEventListener('change', e=>{ seekTo(+e.target.value/10); e.target.mousedown=false; });
 $('rate').addEventListener('change', e=>{ S.rate=+e.target.value; video.playbackRate=S.rate; });
+
+/* ---------------- 仪表布局拖动 ---------------- */
+function layoutCanvasPoint(e){
+  const r = canvas.getBoundingClientRect();
+  const s = Math.min(stage.clientWidth/LAYOUT_W, stage.clientHeight/LAYOUT_H);
+  const ox = (stage.clientWidth - LAYOUT_W*s)/2;
+  const oy = (stage.clientHeight - LAYOUT_H*s)/2;
+  return {x:(e.clientX-r.left-ox)/s, y:(e.clientY-r.top-oy)/s};
+}
+function layoutVisible(key){
+  return S.widgets[key];
+}
+function layoutHitTest(point){
+  // 后绘制的仪表优先响应，避免重叠时拖错目标。
+  for(let i=LAYOUT_KEYS.length-1;i>=0;i--){
+    const key = LAYOUT_KEYS[i];
+    if(!layoutVisible(key)) continue;
+    const p = S.layout[key];
+    if(point.x>=p.x && point.x<=p.x+p.w && point.y>=p.y && point.y<=p.y+p.h) return key;
+  }
+  return null;
+}
+function clampLayoutPosition(key, x, y){
+  const p = S.layout[key];
+  p.x = Math.max(0, Math.min(LAYOUT_W-p.w, x));
+  p.y = Math.max(0, Math.min(LAYOUT_H-p.h, y));
+}
+canvas.addEventListener('pointerdown', e=>{
+  if(!S.layoutEdit) return;
+  const point = layoutCanvasPoint(e), key = layoutHitTest(point);
+  if(!key) return;
+  const p = S.layout[key];
+  S.draggingLayout = {key, dx:point.x-p.x, dy:point.y-p.y};
+  canvas.setPointerCapture(e.pointerId);
+  e.preventDefault();
+});
+canvas.addEventListener('pointermove', e=>{
+  if(!S.draggingLayout) return;
+  const point = layoutCanvasPoint(e), d = S.draggingLayout;
+  clampLayoutPosition(d.key, point.x-d.dx, point.y-d.dy);
+  S.dirty = true;
+  e.preventDefault();
+});
+function finishLayoutDrag(e){
+  if(!S.draggingLayout) return;
+  saveLayoutPrefs();
+  if(canvas.hasPointerCapture && canvas.hasPointerCapture(e.pointerId)) canvas.releasePointerCapture(e.pointerId);
+  S.draggingLayout = null;
+  S.dirty = true;
+}
+canvas.addEventListener('pointerup', finishLayoutDrag);
+canvas.addEventListener('pointercancel', finishLayoutDrag);
+canvas.addEventListener('pointerdown', e=>{
+  if(S.layoutEdit || !S.data || !S.widgets.curve) return;
+  const point=layoutCanvasPoint(e), p=S.layout.curve;
+  const plotX=p.x+18, plotY=p.y+28, plotW=p.w-36, plotH=p.h-40;
+  if(point.x<plotX || point.x>plotX+plotW || point.y<plotY || point.y>plotY+plotH) return;
+
+  const win=CONFIG.historyWindow;
+  const nowT=playbackDataTime(currentT());
+  const ts=S.series && S.series.t;
+  const dataStart=S.dataStart||0, dataEnd=ts&&ts.length?ts[ts.length-1]:nowT;
+  let tStart=Math.max(dataStart,nowT-win/2);
+  let tEnd=Math.min(dataEnd,nowT+win/2);
+  if(tEnd-tStart<win){
+    if(tStart<=dataStart) tEnd=Math.min(dataEnd,dataStart+win);
+    else if(tEnd>=dataEnd) tStart=Math.max(dataStart,dataEnd-win);
+  }
+  const dataT=tStart+(point.x-plotX)/plotW*(tEnd-tStart);
+  seekTo(dataTimeToVideoTime(dataT));
+  e.preventDefault();
+});
+canvas.addEventListener('pointerdown', e=>{
+  if(S.layoutEdit || !S.data || !S.widgets.profile || !S.profile) return;
+  const point=layoutCanvasPoint(e), p=S.layout.profile;
+  const plotX=p.x+16, plotY=p.y+28, plotW=p.w-32, plotH=p.h-38;
+  if(point.x<plotX || point.x>plotX+plotW || point.y<plotY || point.y>plotY+plotH) return;
+  const profile=S.profile;
+  const dataT=profile.t0+(point.x-plotX)/plotW*(profile.t1-profile.t0);
+  seekTo(dataTimeToVideoTime(dataT));
+  e.preventDefault();
+});
 
 window.addEventListener('keydown', e=>{
   if(e.target.tagName==='INPUT'||e.target.tagName==='SELECT') return;

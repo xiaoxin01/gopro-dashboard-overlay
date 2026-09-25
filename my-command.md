@@ -1,6 +1,65 @@
+# 外挂数据显示方案
+
+## 导出 player 支持的 json 文件
+
+使用 FIT 文件生成 player 支持的 JSON 数据文件：
+
+```shell
+.venv/bin/python bin/gopro-export-json.py \
+  --fit "player/example-data/庐南川藏线_三公山.fit" \
+  "player/example-data/庐南川藏线_三公山.json"
+```
+
+将 `--fit` 后的路径替换为输入 FIT 文件，将最后一个路径替换为输出 JSON 文件路径。
+
+## 生成 player 使用的 offset 文件
+
+根据原始 GoPro 视频文件的录制时间、合并视频时长和导出的数据 JSON，生成 offset 文件：
+
+```shell
+.venv/bin/python bin/init-offset.py \
+  --data "player/example-data/庐南川藏线_三公山.json" \
+  --video-dir "/Volumes/ssd/cycling/20260920-庐南加三公山" \
+  --combined "/Volumes/ssd/cycling-out/20260920-庐南加三公山/combine.mp4" \
+  "player/example-data/庐南川藏线_三公山.offset.json"
+```
+
+其中 `--video-dir` 是合并前的原始 GoPro 视频目录，`--combined` 是合并后的视频文件。
+
+## Merging all MP4 files in a directory
+
+On macOS, you can use `bin/merge-videos.sh` to merge the MP4 files directly
+inside an input directory. Files are ordered by creation time, and the result is
+HEVC-transcoded with `hevc_videotoolbox`. The default output filename is
+`combine.mp4`.
+
+```shell
+bin/merge-videos.sh \
+  "/Volumes/ssd/cycling/20260920-庐南加三公山" \
+  "/Volumes/ssd/cycling-out/20260920-庐南加三公山"
+```
+
+To choose a different output filename, provide it as the third argument:
+
+```shell
+bin/merge-videos.sh \
+  "/Volumes/ssd/cycling/20260726-浙西天路" \
+  "/Volumes/ssd/cycling-out/20260726-浙西天路" \
+  merged.mp4
+```
+
+The command requires `ffmpeg` and `python3`. It ignores macOS `._` metadata files,
+copies the first audio stream, and writes to a temporary file before replacing the
+final output so an interrupted conversion does not leave a seemingly complete
+but unplayable MP4.
+
+## 播放
+
+    http://127.0.0.1:8000/player/index.html?data=example-data/庐南川藏线_三公山.json&video=video2/combine.mp4
+
 # batch
 
-bash trans-one.sh /Volumes/gopro/DCIM/20250420-银屏山/GX010302.MP4 /Volumes/ssd/cycling/20250420-银屏山 ~/Downloads/银屏山巴黎鲁贝-14.gpx
+bash trans-one-2x.sh /Volumes/ssd/cycling/20260725-皖浙天路/GX010438.MP4 /Volumes/ssd/cycling-out/20260725-皖浙天路 ~/Downloads/皖浙天路顺时针一圈.gpx
 
 bash trans-one.sh /Volumes/gopro/DCIM/20250525-银屏山土路越野/GX010360.MP4 /Volumes/ssd/cycling/20250525-银屏山土路越野 ~/Downloads/霍山到龙井峡.gpx
 

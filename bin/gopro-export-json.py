@@ -66,6 +66,8 @@ from gopro_overlay.units import units  # noqa: E402
 # ---- 处理管线 ---------------------------------------------------------------
 
 PACKETS_PER_SECOND = 18
+GRADIENT_WINDOW_SECONDS = 2
+GRADIENT_ADVANCE_SECONDS = 6
 LOCKED_2D = lambda e: e.gpsfix in GPS_FIXED_VALUES  # noqa: E731
 LOCKED_3D = lambda e: e.gpsfix == GPSFix.LOCK_3D.value  # noqa: E731
 
@@ -74,7 +76,12 @@ def process_framemeta(ts: FrameMeta) -> None:
     """GoPro GPMD FrameMeta：18Hz 原始点，按原项目管线处理。"""
     ts.process_deltas(timeseries_process.calculate_speeds(), skip=PACKETS_PER_SECOND * 3, filter_fn=LOCKED_2D)
     ts.process(timeseries_process.calculate_odo(), filter_fn=LOCKED_2D)
-    ts.process_deltas(timeseries_process.calculate_gradient(), skip=PACKETS_PER_SECOND * 3, filter_fn=LOCKED_3D)
+    timeseries_process.process_gradient_window(
+        ts,
+        window_seconds=GRADIENT_WINDOW_SECONDS,
+        time_shift_seconds=GRADIENT_ADVANCE_SECONDS,
+        filter_fn=LOCKED_3D,
+    )
     ts.process(timeseries_process.filter_locked())
 
 
@@ -83,7 +90,11 @@ def process_timeseries(ts) -> None:
     GPX 无 gpsfix 概念，不跑 filter_locked；skip=1 逐点计算速度/坡度。"""
     ts.process_deltas(timeseries_process.calculate_speeds(), skip=1)
     ts.process(timeseries_process.calculate_odo())
-    ts.process_deltas(timeseries_process.calculate_gradient(), skip=1)
+    timeseries_process.process_gradient_window(
+        ts,
+        window_seconds=GRADIENT_WINDOW_SECONDS,
+        time_shift_seconds=GRADIENT_ADVANCE_SECONDS,
+    )
 
 
 def number(v) -> Optional[float]:

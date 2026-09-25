@@ -1,3 +1,6 @@
+import bisect
+from datetime import timedelta
+
 from geographiclib.geodesic import Geodesic
 
 from .gpmd import GPS_FIXED_VALUES
@@ -118,3 +121,42 @@ def calculate_gradient():
                 }
 
     return accept
+
+
+def process_gradient_window(
+    ts, window_seconds=5, time_shift_seconds=0, filter_fn=lambda e: True
+):
+    """Calculate each point's gradient from the surrounding time window.
+
+    The elevation difference is measured between points near t-window and
+    t+window, so the effective baseline is about 10 seconds instead of one
+    adjacent GPS interval. A positive time shift calculates the slope around
+    a later time and assigns it to the current entry, advancing the displayed
+    slope without changing the global data/video offset.
+    """
+    entries = list(ts.items())
+    if len(entries) < 3:
+        return
+
+    dates = [entry.dt for entry in entries]
+    delta = timedelta(seconds=window_seconds)
+    shift = timedelta(seconds=time_shift_seconds)
+    calculate = calculate_gradient()
+
+    for index, center in enumerate(entries):
+        sample_dt = center.dt + shift
+        before_target = sample_dt - delta
+        after_target = sample_dt + delta
+        before_index = bisect.bisect_right(dates, before_target) - 1
+        after_index = bisect.bisect_left(dates, after_target)
+        if before_index < 0 or after_index >= len(entries):
+            continue
+
+        before = entries[before_index]
+        after = entries[after_index]
+        if not (filter_fn(before) and filter_fn(center) and filter_fn(after)):
+            continue
+
+        updates = calculate(before, after, after_index - before_index)
+        if updates and "cgrad" in updates:
+            center.update(**updates)

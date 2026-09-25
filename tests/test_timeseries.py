@@ -5,7 +5,7 @@ import pytest
 from gopro_overlay.entry import Entry
 from gopro_overlay.point import Point
 from gopro_overlay.timeseries import Timeseries
-from gopro_overlay.timeseries_process import process_ses, calculate_speeds, calculate_gradient, calculate_odo
+from gopro_overlay.timeseries_process import process_ses, process_gradient_window, calculate_speeds, calculate_gradient, calculate_odo
 from gopro_overlay.timeunits import timeunits
 from gopro_overlay.units import units
 
@@ -58,6 +58,18 @@ def test_processing_with_simple_exp_smoothing():
     assert ts.get(datetime_of(4)).ns == 5.88
 
 
+def test_processing_with_gradient_window():
+    ts = Timeseries()
+    ts.add(
+        Entry(datetime_of(0), alt=metres(100), point=Point(51.50000, -0.14000)),
+        Entry(datetime_of(5), alt=metres(105), point=Point(51.50000, -0.13900)),
+        Entry(datetime_of(10), alt=metres(110), point=Point(51.50000, -0.13800)),
+    )
+    process_gradient_window(ts, window_seconds=5)
+
+    assert ts.get(datetime_of(5)).cgrad.magnitude == pytest.approx(7.2, abs=0.1)
+
+
 def test_process_delta_speeds():
     ts = Timeseries()
     ts.add(
@@ -107,4 +119,3 @@ def test_process_odo():
         e=Entry(datetime_of(0), alt=metres(5), dist=metres(15)),
     )
     assert r["codo"].magnitude == 25
-
