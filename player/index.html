@@ -75,6 +75,10 @@
   .off-input{flex:1;min-width:80px;background:rgba(255,255,255,.04);border:1px solid var(--line);color:var(--fg);font-size:12px;padding:5px 8px;border-radius:6px;font-family:inherit}
   .scrim{position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:39;opacity:0;pointer-events:none;transition:opacity .22s}
   .scrim.show{opacity:1;pointer-events:auto}
+  .widget-menu{position:fixed;z-index:60;display:none;min-width:132px;padding:5px;background:#11161c;border:1px solid var(--line);border-radius:8px;box-shadow:0 10px 30px rgba(0,0,0,.45)}
+  .widget-menu.open{display:block}
+  .widget-menu button{display:block;width:100%;border:0;background:none;color:var(--text);text-align:left;border-radius:5px;padding:8px 10px;font-size:13px;font-family:inherit;cursor:pointer}
+  .widget-menu button:hover{background:rgba(255,255,255,.12)}
   @media (max-width:720px){
     .topbar{padding:8px 10px;gap:8px}
     .brand small{display:none}
@@ -139,6 +143,7 @@
   <div class="p-head"><h3>仪表盘开关</h3><button class="p-close" id="btnPanelClose">×</button></div>
   <div class="p-body" id="panelBody"></div>
 </div>
+<div class="widget-menu" id="widgetMenu"><button id="deleteWidgetBtn">删除仪表</button></div>
 
 <script>
 /* ============================================================================
@@ -157,41 +162,41 @@ const CONFIG = {
   speedGaugeMax: 60,     // 速度仪表盘量程（U.spd 单位，如 km/h）
   profileStep: 1.0,      // 海拔剖面采样步长（秒）
   powerFaceAverageWindow: 10, // 功率表情区间使用最近 N 秒平均功率
+  trackWindowKm: 1, // 左侧区间轨迹数据范围：当前位置前后各 N 公里
+  trackZoomKm: 0.5, // 左侧区间轨迹显示比例：视图中心前后各 N 公里
   palette: { accent:'#3de0c9', warn:'#ffb65c', hr:'#ff6b6b', alt:'#7fb8ff', slope:'#b8e06b', text:'#f4f7f9', dim:'#9aa7b0' },
 };
 
-/* 每个仪表：{key, label, color, def} —— 可在面板里开关，状态存 localStorage */
+/*
+ * 仪表注册表：新增/删除仪表只需要修改这里的一项。
+ *
+ * - draw：对应的绘制函数
+ * - x/y/w/h：默认位置和拖动命中区域（设计坐标 1280×720）
+ * - baseX/baseY：绘制函数内部的固定基准坐标
+ *
+ * 面板开关、布局保存、拖动命中和实际绘制都会从这个列表自动生成。
+ * 例如新增一个已经实现了 drawMyWidget(p) 的仪表：
+ * { key:'mywidget', label:'我的仪表', color:'#fff', def:true,
+ *   draw:drawMyWidget, x:500, y:100, w:180, h:80, baseX:500, baseY:100 },
+ */
 const WIDGETS = [
-  { key:'speed',   label:'速度',          color:'#f4f7f9', def:true },
-  { key:'speedgauge', label:'速度仪表',    color:'#3de0c9', def:true },
-  { key:'power',   label:'功率',          color:'#ffb65c', def:true },
-  { key:'hr',      label:'心率',          color:'#ff6b6b', def:true },
-  { key:'cad',     label:'踏频',          color:'#3de0c9', def:true },
-  { key:'alt',     label:'海拔',          color:'#7fb8ff', def:true },
-  { key:'grad',    label:'坡度',          color:'#b8e06b', def:true },
-  { key:'dist',    label:'距离',          color:'#f4f7f9', def:true },
-  { key:'atemp',   label:'温度',          color:'#d8dee3', def:false },
-  { key:'curve',   label:'速度曲线',      color:'#3de0c9', def:true },
-  { key:'profile', label:'海拔剖面',      color:'#7fb8ff', def:true },
-  { key:'map',     label:'轨迹地图',      color:'#3de0c9', def:true },
+  { key:'speedgauge', label:'速度仪表', color:'#3de0c9', def:true, draw:drawSpeedGauge, x:30.6283309958, y:377.4003331, w:150, h:177, baseX:36, baseY:250 },
+  { key:'power',      label:'功率',     color:'#ffb65c', def:true, draw:drawPower,      x:34.5562762973, y:324.473439691, w:116, h:78,  baseX:36,  baseY:146 },
+  { key:'hr',         label:'心率',     color:'#ff6b6b', def:true, draw:drawHr,         x:182.9261044881, y:322.244740533, w:116, h:78,  baseX:162, baseY:146 },
+  { key:'cad',        label:'踏频',     color:'#3de0c9', def:true, draw:drawCad,        x:186.1583099579, y:409.025946704, w:116, h:78,  baseX:288, baseY:146 },
+  { key:'grad',       label:'坡度',     color:'#b8e06b', def:true, draw:drawGrad,       x:184.2761220196, y:494.646037868, w:116, h:54,  baseX:36,  baseY:440 },
+  { key:'dist',       label:'距离',     color:'#f4f7f9', def:true, draw:drawDist,       x:31.0560133240, y:256.126840813, w:116, h:54,  baseX:162, baseY:440 },
+  { key:'atemp',      label:'温度',     color:'#d8dee3', def:false,draw:drawAtemp,      x:994, y:246, w:250, h:54, baseX:994, baseY:30 },
+  { key:'curve',      label:'速度曲线', color:'#3de0c9', def:true, draw:drawCurve,      x:0, y:584.7681451612904, w:1280, h:70, baseX:0, baseY:560 },
+  { key:'profile',    label:'海拔剖面', color:'#7fb8ff', def:true, draw:drawProfile,    x:0, y:655, w:1280, h:65, baseX:0, baseY:640 },
+  { key:'mapWindow',  label:'近2公里轨迹', color:'#7fb8ff', def:true, draw:drawMapWindow, x:994, y:335.2783134642356, w:250, h:250, baseX:994, baseY:250 },
+  { key:'map',        label:'轨迹地图', color:'#3de0c9', def:true, draw:drawMap,        x:36,  y:284.7519284712483, w:250, h:300, baseX:994, baseY:250 },
 ];
 
-/* 可拖动布局的默认位置（设计坐标 1280×720）。每个仪表独立保存位置。 */
-const LAYOUT_DEFAULTS = {
-  speed:      {x:36,  y:30,  w:250,  h:104},
-  speedgauge: {x:36,  y:250, w:150,  h:177},
-  power:      {x:36,  y:146, w:116,  h:78},
-  hr:         {x:162, y:146, w:116,  h:78},
-  cad:        {x:288, y:146, w:116,  h:78},
-  alt:        {x:994, y:30,  w:250,  h:72},
-  grad:       {x:994, y:114, w:250,  h:54},
-  dist:       {x:994, y:180, w:250,  h:54},
-  atemp:      {x:994, y:246, w:250,  h:54},
-  curve:      {x:36,  y:560, w:1208, h:70},
-  profile:    {x:36,  y:640, w:1208, h:65},
-  map:        {x:994, y:250, w:250,  h:300},
-};
-const LAYOUT_KEYS = Object.keys(LAYOUT_DEFAULTS);
+/* 以下布局索引由 WIDGETS 自动生成，避免新增仪表时漏改其它结构。 */
+const LAYOUT_DEFAULTS = Object.fromEntries(WIDGETS.map(w => [w.key, {x:w.x, y:w.y, w:w.w, h:w.h}]));
+const LAYOUT_BASES = Object.fromEntries(WIDGETS.map(w => [w.key, {x:w.baseX, y:w.baseY}]));
+const LAYOUT_KEYS = WIDGETS.map(w => w.key);
 
 /* ---------------- 状态 ---------------- */
 const S = {
@@ -202,12 +207,24 @@ const S = {
   widgets:{}, history:[], dirty:true,
   offset:0, offsetKey:null, offsetSegments:null,
   layout:{}, layoutEdit:false, draggingLayout:null,
+  removedWidgets:new Set(), contextWidget:null,
   cadencePhase:0, cadenceT:null,
   heartPhase:0, heartT:null,
-  powerFaceZone:null, powerFaceAnimating:false,
+  powerFaceZone:null, powerFaceAnimating:false, powerFaceUpdateFrame:-1,
   powerBreathPhase:0, powerBreathT:null,
   powerFaceSamples:[], powerFaceSampleT:null,
 };
+function loadRemovedWidgetPrefs(){
+  try{
+    const saved = JSON.parse(localStorage.getItem('dashboard-removed-widgets') || '[]');
+    if(Array.isArray(saved)) saved.forEach(key=>S.removedWidgets.add(key));
+  }catch(e){}
+}
+function saveRemovedWidgetPrefs(){
+  try{ localStorage.setItem('dashboard-removed-widgets', JSON.stringify([...S.removedWidgets])); }catch(e){}
+}
+function widgetAvailable(key){ return !S.removedWidgets.has(key); }
+loadRemovedWidgetPrefs();
 function loadWidgetPrefs(){
   const prefs = {};
   try{
@@ -216,22 +233,31 @@ function loadWidgetPrefs(){
   WIDGETS.forEach(w => S.widgets[w.key] = prefs[w.key]==null ? w.def : prefs[w.key]==='1');
 }
 loadWidgetPrefs();
+function mergeLayoutConfig(config){
+  const widgets = config && config.widgets ? config.widgets : {};
+  Object.keys(widgets).forEach(key=>{
+    if(!LAYOUT_DEFAULTS[key]) return;
+    const source = widgets[key];
+    ['x','y','w','h'].forEach(field=>{
+      if(Number.isFinite(source[field])) LAYOUT_DEFAULTS[key][field] = source[field];
+    });
+  });
+}
 function loadLayoutPrefs(){
-  let saved = {};
-  try{ saved = JSON.parse(localStorage.getItem('dashboard-layout') || '{}'); }catch(e){}
   LAYOUT_KEYS.forEach(key=>{
-    const d = LAYOUT_DEFAULTS[key], p = saved[key] || {};
+    const d = LAYOUT_DEFAULTS[key];
     S.layout[key] = {
-      x: Number.isFinite(p.x) ? p.x : d.x,
-      y: Number.isFinite(p.y) ? p.y : d.y,
+      x: d.x,
+      y: d.y,
       w: d.w, h: d.h,
     };
   });
 }
-function saveLayoutPrefs(){
-  try{ localStorage.setItem('dashboard-layout', JSON.stringify(S.layout)); }catch(e){}
-}
 loadLayoutPrefs();
+fetch(new URL('layout-config.json', document.baseURI))
+  .then(response=>response.ok ? response.json() : {})
+  .then(config=>{ mergeLayoutConfig(config); loadLayoutPrefs(); S.dirty = true; })
+  .catch(()=>{});
 
 /* ---------------- DOM ---------------- */
 const $ = id => document.getElementById(id);
@@ -440,13 +466,21 @@ function buildProfile(){
   S.profile = {points, amin, amax, t0:points[0][0], t1:points[points.length-1][0]};
 }
 function buildTrack(){
-  const lat = S.series.lat, lon = S.series.lon;
+  const lat = S.series.lat, lon = S.series.lon, ts = S.series.t, odo = S.series.odo;
   if(!lat || !lon){ S.track = null; return; }
   let minLat=Infinity, maxLat=-Infinity, minLon=Infinity, maxLon=-Infinity;
   const raw = [];
+  let cumulative=0, previous=null;
   for(let i=0;i<lat.length;i++){
     if(lat[i]==null||lon[i]==null) continue;
-    raw.push([lat[i], lon[i]]);
+    if(previous){
+      const dLat=(lat[i]-previous[0])*Math.PI/180;
+      const dLon=(lon[i]-previous[1])*Math.PI/180;
+      const meanLat=((lat[i]+previous[0])/2)*Math.PI/180;
+      cumulative += 6371000*Math.sqrt(dLat*dLat + Math.pow(dLon*Math.cos(meanLat),2));
+    }
+    raw.push([lat[i], lon[i], ts[i], odo&&odo[i]!=null?Number(odo[i]):null, cumulative]);
+    previous=[lat[i],lon[i]];
     if(lat[i]<minLat)minLat=lat[i]; if(lat[i]>maxLat)maxLat=lat[i];
     if(lon[i]<minLon)minLon=lon[i]; if(lon[i]>maxLon)maxLon=lon[i];
   }
@@ -457,7 +491,7 @@ function buildTrack(){
   for(let i=0;i<raw.length;i+=step) pts.push(raw[i]);
   if(pts[pts.length-1]!==raw[raw.length-1]) pts.push(raw[raw.length-1]);
   const centerLat = (minLat+maxLat)/2;
-  S.track = {pts, minLat, maxLat, minLon, maxLon,
+  S.track = {pts, minLat, maxLat, minLon, maxLon, hasOdo:pts.some(pt=>Number.isFinite(pt[3])),
     latScale:111320, lonScale:111320*Math.cos(centerLat*Math.PI/180)};
 }
 function avgStep(){
@@ -573,7 +607,7 @@ window.addEventListener('resize', ()=>{
 /* ---------------- 绘制：仪表盘 ---------------- */
 const LAYOUT_W = 1280, LAYOUT_H = 720; // 设计基准，坐标按此缩放；非 16:9 视频时仪表垂直居中
 function drawWidgetAt(key, fn){
-  const p = S.layout[key], d = LAYOUT_DEFAULTS[key];
+  const p = S.layout[key], d = LAYOUT_BASES[key];
   ctx.save();
   ctx.translate(p.x - d.x, p.y - d.y);
   fn();
@@ -591,10 +625,14 @@ function draw(){
   ctx.save();
   ctx.translate(ox, oy);
   ctx.scale(s,s);
+  S.drawFrame=(S.drawFrame||0)+1;
   S.powerFaceAnimating=false;
+  S.metricAnimating=false;
 
   const p = sampleAt(playbackDataTime(currentT()));
   if(p){ pushHistory(p); }
+  if(S.playing && p && p.hr!=null){ updateHeartPhase(p); S.metricAnimating=true; }
+  if(S.playing && p && p.cad!=null){ updateCadencePhase(p); S.metricAnimating=true; }
   // 惰性更新面板 offset 显示（seek/播放导致 segment 变化时）
   const ov = $('offsetVal');
   if(ov){ const txt = fmtOffsetDisplay(); if(ov.textContent !== txt) ov.textContent = txt; }
@@ -610,21 +648,15 @@ function draw(){
     }
   }
 
-  if(S.widgets.speed) drawWidgetAt('speed', ()=>drawSpeed(p));
-  if(S.widgets.speedgauge) drawWidgetAt('speedgauge', ()=>drawSpeedGauge(p));
-  if(S.widgets.power) drawWidgetAt('power', ()=>drawPower(p));
-  if(S.widgets.hr) drawWidgetAt('hr', ()=>drawHr(p));
-  if(S.widgets.cad) drawWidgetAt('cad', ()=>drawCad(p));
-  if(S.widgets.alt) drawWidgetAt('alt', ()=>drawAlt(p));
-  if(S.widgets.grad) drawWidgetAt('grad', ()=>drawGrad(p));
-  if(S.widgets.dist) drawWidgetAt('dist', ()=>drawDist(p));
-  if(S.widgets.atemp) drawWidgetAt('atemp', ()=>drawAtemp(p));
-  if(S.widgets.curve) drawWidgetAt('curve', drawCurve);
-  if(S.widgets.profile) drawWidgetAt('profile', ()=>drawProfile(p));
-  if(S.widgets.map) drawWidgetAt('map', ()=>drawMap(p));
+  // WIDGETS 是唯一的仪表注册表；删除/新增配置项会自动影响这里。
+  WIDGETS.forEach(w=>{
+    if(widgetAvailable(w.key) && S.widgets[w.key] && typeof w.draw === 'function'){
+      drawWidgetAt(w.key, ()=>w.draw(p));
+    }
+  });
 
   ctx.restore();
-  S.dirty = S.powerFaceAnimating;
+  S.dirty = S.powerFaceAnimating || S.metricAnimating;
 }
 function panel(x,y,w,h,r){
   ctx.beginPath();
@@ -747,15 +779,20 @@ function averagePowerForFace(p){
   if(!S.powerFaceSamples.length) return value;
   return S.powerFaceSamples.reduce((sum,sample)=>sum+sample.v,0)/S.powerFaceSamples.length;
 }
-function drawPowerFace(x,y,power,p){
+function drawPowerFace(x,y,power,p,advance=true){
   const target=power==null ? 0 : zoneIdx(power);
   if(S.powerFaceZone==null) S.powerFaceZone=target;
   const delta=target-S.powerFaceZone;
-  if(Math.abs(delta)>0.01){
-    // 约 300ms 的区间过渡；即使暂停，也通过 S.dirty 继续绘制动画。
-    S.powerFaceZone += delta*0.12;
-    S.powerFaceAnimating=true;
-  }else S.powerFaceZone=target;
+  if(advance && S.powerFaceUpdateFrame!==S.drawFrame){
+    S.powerFaceUpdateFrame=S.drawFrame;
+    if(!S.playing){
+      S.powerFaceZone=target;
+    }else if(Math.abs(delta)>0.01){
+      // 约 300ms 的区间过渡；即使暂停，也通过 S.dirty 继续绘制动画。
+      S.powerFaceZone += delta*0.12;
+      S.powerFaceAnimating=true;
+    }else S.powerFaceZone=target;
+  }
   const zone=Math.max(0,Math.min(ZONES.length-1,S.powerFaceZone));
   const lo=Math.floor(zone), hi=Math.min(ZONES.length-1,lo+1), mix=zone-lo;
   const color=mixHexColor(ZONES[lo].color,ZONES[hi].color,mix);
@@ -763,6 +800,7 @@ function drawPowerFace(x,y,power,p){
   const smile=lerp(faceLo.smile,faceHi.smile,mix);
   const open=lerp(faceLo.open,faceHi.open,mix);
   const brow=lerp(faceLo.brow,faceHi.brow,mix);
+  const grin=lerp(faceLo.grin,faceHi.grin,mix);
   ctx.save();
   ctx.translate(x,y);
   ctx.fillStyle=color;
@@ -773,17 +811,31 @@ function drawPowerFace(x,y,power,p){
   ctx.beginPath();
   ctx.moveTo(-7,-5+brow); ctx.lineTo(-2,-7+brow);
   ctx.moveTo(2,-7+brow); ctx.lineTo(7,-5+brow); ctx.stroke();
-  ctx.beginPath(); ctx.arc(-4,-3,1.4,0,Math.PI*2); ctx.arc(4,-3,1.4,0,Math.PI*2); ctx.fill();
+  if(grin>0.15){
+    // 恢复区间用弯眼，避免张嘴后看起来像难受或惊讶。
+    ctx.beginPath();
+    ctx.arc(-4,-3,2.6,Math.PI,Math.PI*2);
+    ctx.arc(4,-3,2.6,Math.PI,Math.PI*2);
+    ctx.stroke();
+  }else{
+    ctx.beginPath(); ctx.arc(-4,-3,1.4,0,Math.PI*2); ctx.arc(4,-3,1.4,0,Math.PI*2); ctx.fill();
+  }
 
   // 表情：微笑逐渐变为张嘴/咬牙。
   ctx.beginPath();
-  if(open>0.15){
+  if(grin>0.15){
+    // 恢复区间：张嘴笑。
+    ctx.fillStyle='#10161c';
+    ctx.beginPath();
+    ctx.moveTo(-5,3); ctx.quadraticCurveTo(0,8,5,3);
+    ctx.quadraticCurveTo(0,5,-5,3); ctx.closePath(); ctx.fill();
+  }else if(open>0.15){
     // 高功率区持续大口呼吸；区间越高，呼吸频率越快。
     const breathHz=lerp(0.8,2.4,zone/(ZONES.length-1));
-    const breath=0.5+0.5*Math.sin(updatePowerBreath(breathHz));
+    const breath=0.5+0.5*Math.sin(S.playing ? updatePowerBreath(breathHz) : S.powerBreathPhase);
     const mouthOpen=1.5+open*1.2+breath*(0.8+open*1.5);
     ctx.ellipse(0,5,3+breath*0.6,mouthOpen,0,0,Math.PI*2);
-    S.powerFaceAnimating=true;
+    if(S.playing) S.powerFaceAnimating=true;
   }else { ctx.moveTo(-5,4); ctx.quadraticCurveTo(0,4+smile,5,4); }
   ctx.strokeStyle='#10161c'; ctx.lineWidth=1.7; ctx.stroke();
   ctx.restore();
@@ -802,13 +854,13 @@ function updatePowerBreath(frequency){
 }
 function lerp(a,b,t){ return a+(b-a)*t; }
 const FACE_STYLES = [
-  {smile:0, open:0, brow:0},
-  {smile:2, open:0, brow:0},
-  {smile:4, open:0, brow:0},
-  {smile:0, open:0, brow:0},
-  {smile:-1, open:.45, brow:1},
-  {smile:-2, open:.7, brow:2},
-  {smile:0, open:1, brow:2},
+  {smile:2, open:0, brow:0, grin:0},
+  {smile:2, open:0, brow:0, grin:0},
+  {smile:4, open:0, brow:0, grin:0},
+  {smile:0, open:0, brow:0, grin:0},
+  {smile:-1, open:.45, brow:1, grin:0},
+  {smile:-2, open:.7, brow:2, grin:0},
+  {smile:0, open:1, brow:2, grin:0},
 ];
 function mixHexColor(a,b,t){
   const parse=s=>{
@@ -822,22 +874,26 @@ function drawHr(p){
   tile(162,146,116,78,'心率', p&&p.hr!=null?fmtNum(p.hr,0):null,
     p&&p.hr!=null?'bpm':'', CONFIG.palette.hr, p&&p.hr!=null?fmtNum(p.hr,0):null);
   if(p && p.hr!=null){
-    const phase=updateHeartPhase(p);
+    const phase=S.heartPhase;
     const beat=Math.pow(Math.max(0,Math.sin(phase)),8);
     drawHeartIcon(254,187,1+beat*0.18);
   }
 }
 function updateHeartPhase(p){
-  const t=Number(p.t);
   const bpm=Math.max(30,Math.min(240,Number(p.hr)||0));
-  if(!Number.isFinite(t) || S.heartT==null || t<S.heartT || t-S.heartT>2){
-    S.heartT=t;
+  const now=performance.now()/1000;
+  if(S.heartT==null){
+    S.heartT=now;
     return S.heartPhase;
   }
-  const dt=t-S.heartT;
+  const dt=now-S.heartT;
+  if(dt<0 || dt>2){
+    S.heartT=now;
+    return S.heartPhase;
+  }
   S.heartPhase += dt*(bpm/60)*Math.PI*2;
   S.heartPhase %= Math.PI*2;
-  S.heartT=t;
+  S.heartT=now;
   return S.heartPhase;
 }
 function drawHeartIcon(x,y,scale){
@@ -860,22 +916,26 @@ function drawCad(p){
     p&&p.cad!=null?'rpm':'', CONFIG.palette.accent, p&&p.cad!=null?fmtNum(p.cad,0):null);
   if(p && p.cad!=null){
     const cx=380, cy=187, orbit=12;
-    const phase=updateCadencePhase(p);
+    const phase=S.cadencePhase;
     drawFootprint(cx+Math.cos(phase)*orbit, cy+Math.sin(phase)*orbit, phase);
     drawFootprint(cx+Math.cos(phase+Math.PI)*orbit, cy+Math.sin(phase+Math.PI)*orbit, phase+Math.PI);
   }
 }
 function updateCadencePhase(p){
-  const t=Number(p.t);
   const rpm=Math.max(0,Math.min(250,Number(p.cad)||0));
-  if(!Number.isFinite(t) || S.cadenceT==null || t<S.cadenceT || t-S.cadenceT>2){
-    S.cadenceT=t;
+  const now=performance.now()/1000;
+  if(S.cadenceT==null){
+    S.cadenceT=now;
     return S.cadencePhase;
   }
-  const dt=t-S.cadenceT;
+  const dt=now-S.cadenceT;
+  if(dt<0 || dt>2){
+    S.cadenceT=now;
+    return S.cadencePhase;
+  }
   S.cadencePhase += dt*(rpm/60)*Math.PI*2;
   S.cadencePhase %= Math.PI*2;
-  S.cadenceT=t;
+  S.cadenceT=now;
   return S.cadencePhase;
 }
 function drawFootprint(x,y,angle){
@@ -904,15 +964,15 @@ function drawAlt(p){
   }else bigNum(x+16,y+48,'--',CONFIG.palette.dim,30);
 }
 function drawGrad(p){
-  tile(994,114,250,54,'坡度',p&&p.grad!=null?fmtNum(p.grad,1):null,
+  tile(36,440,116,54,'坡度',p&&p.grad!=null?fmtNum(p.grad,1):null,
     p&&p.grad!=null?'%':'',CONFIG.palette.slope,p&&p.grad!=null?fmtNum(p.grad,1):null);
 }
 function drawDist(p){
-  tile(994,180,250,54,'距离',p&&p.odo!=null?fmtNum(U.dist(p.odo),2):null,
+  tile(162,440,116,54,'距离',p&&p.odo!=null?fmtNum(U.dist(p.odo),2):null,
     p&&p.odo!=null?U.distL:'',CONFIG.palette.text,p&&p.odo!=null?fmtNum(U.dist(p.odo),2):null);
 }
 function drawAtemp(p){
-  tile(994,246,250,54,'温度',p&&p.atemp!=null?fmtNum(p.atemp,0):null,
+  tile(994,30,250,54,'温度',p&&p.atemp!=null?fmtNum(p.atemp,0):null,
     p&&p.atemp!=null?'°C':'','#d8dee3',p&&p.atemp!=null?fmtNum(p.atemp,0):null);
 }
 /* 功率区间（按 %FTP）：恢复<55%灰 / 有氧耐力 55-75%蓝 / 节奏 76-90%绿 / 阈值 91-105%黄 / VO2max 106-120%橙 / 无氧 121-150%橙红 / 冲刺>150%红 */
@@ -932,21 +992,60 @@ function zoneIdx(w){
   return 6;
 }
 function zoneColor(w){ return ZONES[zoneIdx(w)].color; }
-function drawCurve(){
+function drawCurve(p){
   const h = S.history;
-  const x=36, y=560, w=LAYOUT_W-72, hh=70;
+  const x=0, y=560, w=LAYOUT_W, hh=70;
   panel(x,y,w,hh,12);
-  label(x+16,y+18,'功率区间 · 前后各 ' + (CONFIG.historyWindow/2) + 's · FTP ' + (CONFIG.ftp||195) + 'W','rgba(255,255,255,.5)');
-  const plotTop = y+28, plotBot = y+hh-12;
+  const nowT = playbackDataTime(currentT());
+  let cv = p && p.power!=null ? Number(p.power) : null;
+  if(cv==null || !isFinite(cv)){
+    for(const q of h){ if(q.t<=nowT) cv=q.v; else break; }
+  }
+  if(cv==null || !isFinite(cv)) cv=0;
+  const zi = zoneIdx(cv);
+  const metric = (mx, value, unit, color, drawIcon) => {
+    const text = value + (unit||'');
+    ctx.font='700 15px Menlo,Consolas,monospace';
+    const iconW=24, gap=5, textW=ctx.measureText(text).width;
+    const start=mx-(iconW+gap+textW)/2;
+    drawIcon(start+iconW/2, y+29);
+    ctx.textAlign='left'; ctx.textBaseline='middle';
+    ctx.fillStyle=color || CONFIG.palette.text;
+    ctx.fillText(text, start+iconW+gap, y+29);
+  };
+  // 顶部指标栏：距离、海拔、坡度、速度、功率、心率、踏频。
+  const colW=w/7;
+  metric(x+colW*.5, p&&p.odo!=null ? fmtNum(U.dist(p.odo),2) : '--', p&&p.odo!=null ? U.distL : '', CONFIG.palette.text,
+    (ix,iy)=>drawMetricIcon('distance',ix,iy,CONFIG.palette.text));
+  metric(x+colW*1.5, p&&p.alt!=null ? fmtNum(p.alt,0) : '--', p&&p.alt!=null ? 'm' : '', CONFIG.palette.alt,
+    (ix,iy)=>drawMetricIcon('altitude',ix,iy,CONFIG.palette.alt));
+  metric(x+colW*2.5, p&&p.grad!=null ? fmtNum(p.grad,1) : '--', p&&p.grad!=null ? '%' : '', CONFIG.palette.slope,
+    (ix,iy)=>drawMetricIcon('slope',ix,iy,CONFIG.palette.slope));
+  metric(x+colW*3.5, p&&p.speed!=null ? fmtNum(U.spd(p.speed),1) : '--', U.spdL, CONFIG.palette.accent,
+    (ix,iy)=>drawMiniSpeedIcon(ix,iy,p));
+  metric(x+colW*4.5, fmtNum(cv,0), 'W', CONFIG.palette.warn,
+    // 功率仪表可能被隐藏，底部指标始终负责绘制并推进表情动画。
+    (ix,iy)=>drawPowerFace(ix,iy,p&&p.power!=null?Number(p.power):cv,p,true));
+  metric(x+colW*5.5, p&&p.hr!=null ? fmtNum(p.hr,0) : '--', p&&p.hr!=null ? 'bpm' : '', CONFIG.palette.hr,
+    (ix,iy)=>{
+      if(p&&p.hr!=null){
+        const beat=Math.pow(Math.max(0,Math.sin(S.heartPhase||0)),8);
+        drawHeartIcon(ix,iy,.42*(1+beat*.18));
+      }else drawMetricIcon('heart',ix,iy,CONFIG.palette.hr);
+    });
+  metric(x+colW*6.5, p&&p.cad!=null ? fmtNum(p.cad,0) : '--', p&&p.cad!=null ? 'rpm' : '', CONFIG.palette.accent,
+    (ix,iy)=>{
+      if(p&&p.cad!=null){
+        const phase=S.cadencePhase||0, orbit=6;
+        drawFootprint(ix+Math.cos(phase)*orbit,iy+Math.sin(phase)*orbit,phase);
+        drawFootprint(ix+Math.cos(phase+Math.PI)*orbit,iy+Math.sin(phase+Math.PI)*orbit,phase+Math.PI);
+      }else drawMetricIcon('cad',ix,iy,CONFIG.palette.accent);
+    });
+  ctx.textAlign='left';
   if(h.length<2){
-    ctx.font='11px -apple-system,"PingFang SC",sans-serif';
-    ctx.fillStyle='rgba(255,255,255,.3)'; ctx.textBaseline='middle';
-    ctx.fillText(!S.series || S.series.power==null ? '数据无功率字段，曲线不可用' : '播放后显示功率区间分布',
-      x+16, plotTop+(plotBot-plotTop)/2);
     return;
   }
   const win = CONFIG.historyWindow;
-  const nowT = playbackDataTime(currentT());
   const ts = S.series ? S.series.t : null;
   const dataStart = S.dataStart||0, dataEnd = ts && ts.length ? ts[ts.length-1] : nowT;
   let tStart = Math.max(dataStart, nowT - win / 2);
@@ -956,19 +1055,15 @@ function drawCurve(){
     else if(tEnd >= dataEnd) tStart = Math.max(dataStart, dataEnd - win);
   }
   const px = t => x+18 + (t-tStart)/win * (w-36);
-  // 窗口内点 + 各区间累计时长
-  const pts = [], zoneSec = [0,0,0,0,0,0,0];
-  let prevT = null, prevZ = null;
+  // 窗口内点
+  const pts = [];
   for(const q of h){
     if(q.t<tStart || q.t>tEnd) continue;
     const z = zoneIdx(q.v);
     pts.push({X: px(q.t), v: q.v, z});
-    if(prevT!=null) zoneSec[prevZ] += q.t - prevT;
-    prevT = q.t; prevZ = z;
   }
-  if(prevT!=null && tEnd>prevT) zoneSec[prevZ] += tEnd - prevT; // 尾段
   // 堆叠条：按时间逐点着色（每段宽度=采样间隔，颜色=所在 FTP 区间）
-  const barY = plotTop+5, barH = 14;
+  const barY = y+54, barH = 10;
   for(let i=0;i<pts.length;i++){
     const X0 = i ? pts[i-1].X : px(tStart);
     const X1 = i<pts.length-1 ? pts[i+1].X : px(tEnd);
@@ -979,31 +1074,57 @@ function drawCurve(){
   const curT = Math.max(tStart, Math.min(tEnd, nowT));
   ctx.fillStyle='rgba(255,255,255,.85)';
   ctx.fillRect(px(curT)-1, barY-4, 2, barH+8);
-  // 当前功率 + 区间名（右侧）
-  let cv = 0;
-  for(const q of h){ if(q.t<=curT) cv=q.v; else break; }
-  ctx.font='700 20px Menlo,Consolas,monospace'; ctx.fillStyle='#fff'; ctx.textAlign='right';
-  ctx.fillText(fmtNum(cv,0)+' W', x+w-14, barY+2);
-  const zi = zoneIdx(cv);
-  ctx.font='600 11px -apple-system,"PingFang SC",sans-serif';
-  ctx.fillStyle = ZONES[zi].color;
-  ctx.fillText(ZONES[zi].name, x+w-14, barY+18);
   ctx.textAlign='left';
-  // 各区间累计时长（颜色块 + mm:ss）
-  const fmtDur = s => { const m=Math.floor(s/60), ss=Math.round(s%60); return m+':'+(ss<10?'0':'')+ss; };
-  const segW = (w-36)/7;
-  for(let i=0;i<7;i++){
-    const bx = x+18 + segW*i;
-    ctx.fillStyle = ZONES[i].color;
-    ctx.fillRect(bx, plotBot-9, 8, 8);
-    ctx.font='10px Menlo,Consolas,monospace';
-    ctx.fillStyle='rgba(255,255,255,.5)';
-    ctx.fillText(fmtDur(zoneSec[i]), bx+11, plotBot-2);
+}
+function drawMiniSpeedIcon(x,y,p){
+  const max=CONFIG.speedGaugeMax||60;
+  const speed=p&&p.speed!=null?Math.max(0,Math.min(max,U.spd(p.speed))):0;
+  const a0=Math.PI, ang=a0+Math.PI*(speed/max);
+  ctx.save(); ctx.translate(x,y);
+  ctx.strokeStyle=CONFIG.palette.accent; ctx.fillStyle=CONFIG.palette.accent;
+  ctx.lineWidth=1.4; ctx.lineCap='round';
+  ctx.beginPath(); ctx.arc(0,2,8,Math.PI*1.15,Math.PI*1.85); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(0,2); ctx.lineTo(Math.cos(ang)*7,2+Math.sin(ang)*7); ctx.stroke();
+  ctx.beginPath(); ctx.arc(0,2,1.5,0,Math.PI*2); ctx.fill();
+  ctx.restore();
+}
+function drawMetricIcon(type,x,y,color){
+  ctx.save();
+  ctx.translate(x,y);
+  ctx.strokeStyle=color || CONFIG.palette.text;
+  ctx.fillStyle=color || CONFIG.palette.text;
+  ctx.lineWidth=1.5; ctx.lineCap='round'; ctx.lineJoin='round';
+  if(type==='heart'){
+    ctx.scale(.42,.42); ctx.translate(-x,-y); drawHeartIcon(x,y,1); ctx.restore(); return;
   }
+  if(type==='cad'){
+    ctx.scale(.55,.55); ctx.translate(-x,-y); drawFootprint(x,y,0); ctx.restore(); return;
+  }
+  if(type==='distance'){
+    ctx.beginPath(); ctx.moveTo(-8,4); ctx.lineTo(8,4); ctx.stroke();
+    ctx.beginPath(); ctx.arc(-6,4,2,0,Math.PI*2); ctx.arc(6,4,2,0,Math.PI*2); ctx.fill();
+    ctx.beginPath(); ctx.moveTo(0,-7); ctx.lineTo(0,1); ctx.moveTo(-3,-4); ctx.lineTo(0,-7); ctx.lineTo(3,-4); ctx.stroke();
+  }else if(type==='altitude'){
+    ctx.beginPath();
+    ctx.moveTo(-9,6); ctx.lineTo(-3,-1); ctx.lineTo(1,3); ctx.lineTo(6,-5); ctx.lineTo(10,6);
+    ctx.stroke();
+  }else if(type==='slope'){
+    ctx.beginPath(); ctx.moveTo(-8,5); ctx.lineTo(-2,-2); ctx.lineTo(2,2); ctx.lineTo(8,-6); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(4,-6); ctx.lineTo(8,-6); ctx.lineTo(8,-2); ctx.stroke();
+  }else if(type==='power'){
+    ctx.beginPath();
+    ctx.moveTo(2,-9); ctx.lineTo(-5,1); ctx.lineTo(-1,1); ctx.lineTo(-3,9);
+    ctx.lineTo(6,-3); ctx.lineTo(2,-3); ctx.closePath(); ctx.fill();
+  }else{
+    ctx.beginPath(); ctx.arc(0,2,7,Math.PI*1.15,Math.PI*1.85); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(0,2); ctx.lineTo(5,-4); ctx.stroke();
+    ctx.beginPath(); ctx.arc(0,2,1.5,0,Math.PI*2); ctx.fill();
+  }
+  ctx.restore();
 }
 function drawProfile(p){
   if(!S.profile || S.profile.points.length<2) return;
-  const x=36, y=640, w=LAYOUT_W-72, hh=65;
+  const x=0, y=640, w=LAYOUT_W, hh=65;
   panel(x,y,w,hh,12);
   label(x+16,y+16,'海拔剖面 · 全程','rgba(255,255,255,.5)');
   const pr=S.profile, pts=pr.points;
@@ -1023,6 +1144,10 @@ function drawProfile(p){
     if(p.alt!=null){
       const Y = py(p.alt);
       ctx.beginPath(); ctx.arc(X,Y,3.5,0,Math.PI*2); ctx.fillStyle='#fff'; ctx.fill();
+      ctx.font='600 11px Menlo,Consolas,monospace';
+      ctx.fillStyle='rgba(255,255,255,.85)'; ctx.textAlign='center'; ctx.textBaseline='bottom';
+      ctx.fillText(fmtNum(p.alt,0)+'m',X,Math.max(plotTop+10,Y-8));
+      ctx.textAlign='left'; ctx.textBaseline='middle';
     }
   }
 }
@@ -1030,7 +1155,6 @@ function drawMap(p){
   if(!S.track) return;
   const x=LAYOUT_W-36-250, y=250, w=250, hh=300;
   panel(x,y,w,hh,12);
-  label(x+16,y+20,'轨迹','rgba(255,255,255,.5)');
   const tr=S.track;
   const pad=16, plotW=w-32, plotH=hh-40;
   const dLat=tr.maxLat-tr.minLat||1, dLon=tr.maxLon-tr.minLon||1;
@@ -1051,6 +1175,74 @@ function drawMap(p){
     ctx.beginPath(); ctx.arc(X,Y,8,0,Math.PI*2); ctx.strokeStyle=CONFIG.palette.accent; ctx.lineWidth=2; ctx.stroke();
     ctx.beginPath(); ctx.arc(X,Y,4,0,Math.PI*2); ctx.fillStyle='#fff'; ctx.fill();
   }
+}
+function drawMapWindow(p){
+  if(!S.track) return;
+  const x=994, y=250, w=250, hh=250;
+  panel(x,y,w,hh,12);
+  const radiusKm=CONFIG.trackWindowKm||1;
+
+  // 优先使用数据中的累计里程；没有 odo 字段时，使用 GPS 点之间计算出的累计距离。
+  const useOdo=S.track.hasOdo && p&&Number.isFinite(Number(p.odo));
+  let currentDistance=useOdo ? Number(p.odo) : null;
+  if(!Number.isFinite(currentDistance)){
+    const lat=p&&p.lat!=null?Number(p.lat):null, lon=p&&p.lon!=null?Number(p.lon):null;
+    let nearest=null, nearestScore=Infinity;
+    S.track.pts.forEach(pt=>{
+      const score=lat!=null&&lon!=null ? Math.pow(pt[0]-lat,2)+Math.pow(pt[1]-lon,2) : 0;
+      if(score<nearestScore){ nearestScore=score; nearest=pt; }
+    });
+    currentDistance=nearest ? nearest[4] : 0;
+  }
+  const radius=radiusKm*1000;
+  const distanceOf=pt=>useOdo ? pt[3] : pt[4];
+  let pts=S.track.pts.filter(pt=>{
+    const d=distanceOf(pt);
+    return Number.isFinite(d) && Math.abs(d-currentDistance)<=radius;
+  });
+  // 追加当前插值位置，让线路在播放时立即跟随当前位置变化。
+  if(p&&Number.isFinite(Number(p.lat))&&Number.isFinite(Number(p.lon))){
+    pts.push([Number(p.lat),Number(p.lon),p.t,useOdo?Number(p.odo):null,currentDistance]);
+    pts.sort((a,b)=>distanceOf(a)-distanceOf(b));
+  }
+  if(pts.length<2){
+    ctx.font='11px -apple-system,"PingFang SC",sans-serif';
+    ctx.fillStyle='rgba(255,255,255,.35)'; ctx.textBaseline='middle';
+    ctx.fillText('播放后显示区间轨迹',x+16,y+hh/2);
+    return;
+  }
+
+  let minLat=Infinity,maxLat=-Infinity,minLon=Infinity,maxLon=-Infinity;
+  pts.forEach(([la,lo])=>{
+    minLat=Math.min(minLat,la); maxLat=Math.max(maxLat,la);
+    minLon=Math.min(minLon,lo); maxLon=Math.max(maxLon,lo);
+  });
+  // 缩放按区间轨迹计算，但视图中心始终锁定当前播放位置。
+  const currentLat=p&&p.lat!=null ? Number(p.lat) : (minLat+maxLat)/2;
+  const currentLon=p&&p.lon!=null ? Number(p.lon) : (minLon+maxLon)/2;
+  const centerLat=Number.isFinite(currentLat) ? currentLat : (minLat+maxLat)/2;
+  const latScale=111320, lonScale=111320*Math.cos(centerLat*Math.PI/180);
+  const pad=16, plotW=w-32, plotH=hh-40;
+  const centerLon=Number.isFinite(currentLon) ? currentLon : (minLon+maxLon)/2;
+  // 固定比例：视图范围由 trackZoomKm 决定，不随当前路线跨度自动缩放。
+  // 这样路线弯曲程度变化时，仪表大小也保持稳定。
+  const zoomRadius=Math.max(0.1,(CONFIG.trackZoomKm||radius)*1000);
+  const scale=Math.min((plotW/2-8)/zoomRadius, (plotH/2-8)/zoomRadius);
+  const px=lon=>x+pad+plotW/2+(lon-centerLon)*lonScale*scale;
+  const py=lat=>y+24+plotH/2-(lat-centerLat)*latScale*scale;
+
+  // 只在地图绘图区内绘制，超出边界的路线和标记不可见。
+  ctx.save();
+  ctx.beginPath(); ctx.rect(x+pad,y+24,plotW,plotH); ctx.clip();
+  ctx.beginPath();
+  pts.forEach(([la,lo],i)=>{ const X=px(lo),Y=py(la); i?ctx.lineTo(X,Y):ctx.moveTo(X,Y); });
+  ctx.strokeStyle='rgba(127,184,255,.7)'; ctx.lineWidth=2.5; ctx.lineJoin='round'; ctx.stroke();
+  if(p&&p.lat!=null&&p.lon!=null){
+    const X=px(p.lon),Y=py(p.lat);
+    ctx.beginPath(); ctx.arc(X,Y,8,0,Math.PI*2); ctx.strokeStyle=CONFIG.palette.accent; ctx.lineWidth=2; ctx.stroke();
+    ctx.beginPath(); ctx.arc(X,Y,4,0,Math.PI*2); ctx.fillStyle='#fff'; ctx.fill();
+  }
+  ctx.restore();
 }
 
 /* ---------------- 历史曲线数据 ---------------- */
@@ -1152,7 +1344,7 @@ function buildPanel(){
 
   // ---- 仪表开关 ----
   const h = document.createElement('h4'); h.textContent='仪表'; body.appendChild(h);
-  WIDGETS.forEach(w=>{
+  WIDGETS.filter(w=>widgetAvailable(w.key)).forEach(w=>{
     const lab = document.createElement('label');
     lab.innerHTML = '<span><span class="dot" style="background:'+w.color+'"></span>'+w.label+'</span>';
     const cb = document.createElement('input');
@@ -1185,17 +1377,42 @@ function buildPanel(){
       const d = LAYOUT_DEFAULTS[key];
       S.layout[key] = {x:d.x, y:d.y, w:d.w, h:d.h};
     });
-    saveLayoutPrefs(); S.dirty = true;
+    S.dirty = true;
   });
   layoutRow.appendChild(layoutBtn); layoutRow.appendChild(resetLayoutBtn); body.appendChild(layoutRow);
+  const exportLayoutBtn = document.createElement('button'); exportLayoutBtn.className='off-btn';
+  exportLayoutBtn.textContent='导出布局配置';
+  exportLayoutBtn.addEventListener('click', ()=>{
+    const config = {widgets:{}};
+    LAYOUT_KEYS.forEach(key=>{ config.widgets[key] = {...S.layout[key]}; });
+    const blob = new Blob([JSON.stringify(config, null, 2)+'\n'], {type:'application/json'});
+    const link = document.createElement('a');
+    link.href = URL.createObjectURL(blob); link.download = 'layout-config.json'; link.click();
+    setTimeout(()=>URL.revokeObjectURL(link.href), 0);
+  });
+  body.appendChild(exportLayoutBtn);
   const layoutNote = document.createElement('div'); layoutNote.className='note';
-  layoutNote.textContent='开启后直接拖动画布上的单个仪表；取消勾选即可隐藏，位置会自动保存。';
+  layoutNote.textContent='开启后直接拖动画布上的单个仪表；点击「导出布局配置」后，将下载的 layout-config.json 放回播放器目录即可保存。';
   body.appendChild(layoutNote);
 
   const note = document.createElement('div');
   note.className='note';
   note.innerHTML='配置在页面顶部 <code>CONFIG</code> 里：速度单位、曲线时长、颜色。<br>改完刷新即生效，视频原片零渲染。';
   body.appendChild(note);
+
+  const removed = WIDGETS.filter(w=>!widgetAvailable(w.key));
+  if(removed.length){
+    const restoreSep = document.createElement('hr'); restoreSep.className='p-sep'; body.appendChild(restoreSep);
+    const restoreTitle = document.createElement('h4'); restoreTitle.textContent='已删除仪表'; body.appendChild(restoreTitle);
+    removed.forEach(w=>{
+      const restoreBtn = document.createElement('button'); restoreBtn.className='off-btn';
+      restoreBtn.textContent='恢复「'+w.label+'」';
+      restoreBtn.addEventListener('click',()=>{
+        S.removedWidgets.delete(w.key); saveRemovedWidgetPrefs(); buildPanel(); S.dirty=true;
+      });
+      body.appendChild(restoreBtn);
+    });
+  }
 }
 $('btnPanel').addEventListener('click', ()=>{ $('panel').classList.add('open'); $('scrim').classList.add('show'); });
 $('btnPanelClose').addEventListener('click', closePanel);
@@ -1223,7 +1440,7 @@ function layoutCanvasPoint(e){
   return {x:(e.clientX-r.left-ox)/s, y:(e.clientY-r.top-oy)/s};
 }
 function layoutVisible(key){
-  return S.widgets[key];
+  return widgetAvailable(key) && S.widgets[key];
 }
 function layoutHitTest(point){
   // 后绘制的仪表优先响应，避免重叠时拖错目标。
@@ -1258,15 +1475,45 @@ canvas.addEventListener('pointermove', e=>{
 });
 function finishLayoutDrag(e){
   if(!S.draggingLayout) return;
-  saveLayoutPrefs();
   if(canvas.hasPointerCapture && canvas.hasPointerCapture(e.pointerId)) canvas.releasePointerCapture(e.pointerId);
   S.draggingLayout = null;
   S.dirty = true;
 }
 canvas.addEventListener('pointerup', finishLayoutDrag);
 canvas.addEventListener('pointercancel', finishLayoutDrag);
+const widgetMenu = $('widgetMenu');
+function closeWidgetMenu(){
+  widgetMenu.classList.remove('open');
+  S.contextWidget = null;
+}
+function openWidgetMenu(e, key){
+  S.contextWidget = key;
+  widgetMenu.classList.add('open');
+  const pad = 8, menuW = 132, menuH = 42;
+  widgetMenu.style.left = Math.min(e.clientX, window.innerWidth-menuW-pad) + 'px';
+  widgetMenu.style.top = Math.min(e.clientY, window.innerHeight-menuH-pad) + 'px';
+}
+canvas.addEventListener('contextmenu', e=>{
+  const key = layoutHitTest(layoutCanvasPoint(e));
+  if(!key) return;
+  e.preventDefault();
+  openWidgetMenu(e, key);
+});
+$('deleteWidgetBtn').addEventListener('click', ()=>{
+  if(!S.contextWidget) return;
+  S.removedWidgets.add(S.contextWidget);
+  saveRemovedWidgetPrefs();
+  closeWidgetMenu();
+  if(S.layoutEdit) S.layoutEdit=false;
+  stage.classList.remove('layout-edit');
+  buildPanel();
+  S.dirty=true;
+});
+window.addEventListener('pointerdown', e=>{
+  if(!widgetMenu.contains(e.target)) closeWidgetMenu();
+});
 canvas.addEventListener('pointerdown', e=>{
-  if(S.layoutEdit || !S.data || !S.widgets.curve) return;
+  if(S.layoutEdit || !S.data || !widgetAvailable('curve') || !S.widgets.curve) return;
   const point=layoutCanvasPoint(e), p=S.layout.curve;
   const plotX=p.x+18, plotY=p.y+28, plotW=p.w-36, plotH=p.h-40;
   if(point.x<plotX || point.x>plotX+plotW || point.y<plotY || point.y>plotY+plotH) return;
@@ -1286,7 +1533,7 @@ canvas.addEventListener('pointerdown', e=>{
   e.preventDefault();
 });
 canvas.addEventListener('pointerdown', e=>{
-  if(S.layoutEdit || !S.data || !S.widgets.profile || !S.profile) return;
+  if(S.layoutEdit || !S.data || !widgetAvailable('profile') || !S.widgets.profile || !S.profile) return;
   const point=layoutCanvasPoint(e), p=S.layout.profile;
   const plotX=p.x+16, plotY=p.y+28, plotW=p.w-32, plotH=p.h-38;
   if(point.x<plotX || point.x>plotX+plotW || point.y<plotY || point.y>plotY+plotH) return;
