@@ -45,6 +45,7 @@
   .ctrl-btn{background:none;border:none;color:var(--text);width:36px;height:36px;border-radius:50%;cursor:pointer;display:flex;align-items:center;justify-content:center;transition:background .15s}
   .ctrl-btn:hover{background:rgba(255,255,255,.12)}
   .ctrl-btn svg{width:18px;height:18px;fill:currentColor}
+  .fullscreen-btn{margin-left:2px}
   input[type=range].seek{flex:1;min-width:140px;accent-color:var(--accent);cursor:pointer}
   .time{font-size:12px;color:var(--dim);font-variant-numeric:tabular-nums;white-space:nowrap}
   .speed-select{margin-left:auto}
@@ -136,6 +137,10 @@
     <option value="3">3×</option>
     <option value="4">4×</option>
   </select>
+  <button class="ctrl-btn fullscreen-btn" id="btnFullscreen" title="进入全屏 (F)" aria-label="进入全屏">
+    <svg id="icFullscreen" viewBox="0 0 24 24"><path d="M4 4h6v2H6v4H4V4zm10 0h6v6h-2V6h-4V4zM4 14h2v4h4v2H4v-6zm14 0h2v6h-6v-2h4v-4z"/></svg>
+    <svg id="icExitFullscreen" viewBox="0 0 24 24" style="display:none"><path d="M9 4H7v3H4v2h5V4zm6 0v5h5V7h-3V4h-2zm-6 11H4v2h3v3h2v-5zm6 0v5h2v-3h3v-2h-5z"/></svg>
+  </button>
 </div>
 
 <div class="scrim" id="scrim"></div>
@@ -162,10 +167,13 @@ const CONFIG = {
   speedGaugeMax: 60,     // 速度仪表盘量程（U.spd 单位，如 km/h）
   profileStep: 1.0,      // 海拔剖面采样步长（秒）
   powerFaceAverageWindow: 10, // 功率表情区间使用最近 N 秒平均功率
-  trackWindowKm: 1, // 左侧区间轨迹数据范围：当前位置前后各 N 公里
+  trackWindowKm: 4, // 左侧区间轨迹数据范围：当前位置前后各 N 公里
   trackZoomKm: 0.5, // 左侧区间轨迹显示比例：视图中心前后各 N 公里
   palette: { accent:'#3de0c9', warn:'#ffb65c', hr:'#ff6b6b', alt:'#7fb8ff', slope:'#b8e06b', text:'#f4f7f9', dim:'#9aa7b0' },
 };
+
+// 未通过 URL 参数指定数据时使用的默认数据文件；同目录下的 .offset.json 会自动加载。
+const DEFAULT_DATA_URL = 'data/庐南川藏线_三公山.json';
 
 /*
  * 仪表注册表：新增/删除仪表只需要修改这里的一项。
@@ -283,16 +291,68 @@ async function loadDataFromFile(file){
     tryAutoLoadOffset(file.name);
   }catch(e){ setStatus('数据读取失败: ' + e.message); }
 }
-async function loadDataFromUrl(url){
+async function loadDataFromUrl(url, silent=false){
   setStatus('加载 ' + url + ' …');
   try{
     const r = await fetch(url);
     if(!r.ok) throw new Error('HTTP ' + r.status);
     parseData(await r.text(), url);
     tryAutoLoadOffset(url);
+    return true;
   }catch(e){
-    setStatus('无法从 ' + url + ' 加载（file:// 下禁止 fetch，请直接拖拽 JSON 文件）');
+    if(!silent) setStatus('无法从 ' + url + ' 加载（file:// 下禁止 fetch，请直接拖拽 JSON 文件）');
+    return false;
   }
+}
+async function loadOffsetFromUrl(url){
+  try{
+    const r = await fetch(url);
+    if(!r.ok) return false;
+    applyOffsetFile(await r.json());
+    return true;
+  }catch(e){ return false; }
+}
+/* URL 视频同目录下的 data/ 目录自动发现；普通文件选择无法取得本地父目录。 */
+async function autoLoadDataForVideoUrl(videoUrl){
+  try{
+    const video = new URL(videoUrl, document.baseURI);
+    const dataDir = new URL('data/', video).href;
+    const listing = await fetch(dataDir);
+    if(!listing.ok) return false;
+
+    const html = await listing.text();
+    const doc = new DOMParser().parseFromString(html, 'text/html');
+    const links = [...doc.querySelectorAll('a[href]')]
+      .map(a=>new URL(a.getAttribute('href'), dataDir))
+      .filter(u=>{
+        const name = decodeURIComponent(u.pathname.split('/').pop() || '');
+        return u.origin===video.origin && u.pathname.startsWith(new URL(dataDir).pathname) && !name.startsWith('.');
+      });
+    const jsonUrls = links.filter(u=>/\.json$/i.test(u.pathname) && !/\.offset\.json$/i.test(u.pathname));
+    const offsetUrls = links.filter(u=>/\.offset\.json$/i.test(u.pathname));
+    if(!jsonUrls.length) return false;
+
+    const videoStem = decodeURIComponent(video.pathname.split('/').pop() || '').replace(/\.[^.]+$/, '');
+    jsonUrls.sort((a,b)=>{
+      const aScore = decodeURIComponent(a.pathname.split('/').pop() || '').replace(/\.json$/i,'')===videoStem ? 0 : 1;
+      const bScore = decodeURIComponent(b.pathname.split('/').pop() || '').replace(/\.json$/i,'')===videoStem ? 0 : 1;
+      return aScore-bScore || a.pathname.localeCompare(b.pathname);
+    });
+    let dataUrl = null;
+    for(const candidate of jsonUrls){
+      if(await loadDataFromUrl(candidate.href, true)){
+        dataUrl = candidate.href;
+        break;
+      }
+    }
+    if(!dataUrl) return false;
+
+    // 同名 offset 会由 loadDataFromUrl 自动加载；若目录里只有其它 offset，则补充尝试。
+    const dataName = decodeURIComponent(dataUrl.split('/').pop() || '').replace(/\.json$/i,'');
+    const matchingOffset = offsetUrls.find(u=>decodeURIComponent(u.pathname.split('/').pop() || '').replace(/\.offset\.json$/i,'')===dataName);
+    if(!matchingOffset && offsetUrls.length) await loadOffsetFromUrl(offsetUrls[0].href);
+    return true;
+  }catch(e){ return false; }
 }
 /* 自动查找与数据同名的 .offset.json 并应用（URL 未显式指定 offsetFile 时） */
 function tryAutoLoadOffset(dataUrl){
@@ -1427,9 +1487,43 @@ $('btnVideo').addEventListener('click', ()=> $('fileVideo').click());
 $('btnVideo2').addEventListener('click', ()=> $('fileVideo').click());
 $('fileVideo').addEventListener('change', e=>{ if(e.target.files[0]) loadVideoFile(e.target.files[0]); e.target.value=''; });
 $('btnPlay').addEventListener('click', togglePlay);
+$('btnFullscreen').addEventListener('click', toggleFullscreen);
 $('seek').addEventListener('input', e=>{ const r=e.target; r.mousedown=true; });
 $('seek').addEventListener('change', e=>{ seekTo(+e.target.value/10); e.target.mousedown=false; });
 $('rate').addEventListener('change', e=>{ S.rate=+e.target.value; video.playbackRate=S.rate; });
+
+/* ---------------- 全屏 ---------------- */
+function updateFullscreenButton(){
+  const fullscreen = Boolean(document.fullscreenElement || document.webkitFullscreenElement);
+  $('icFullscreen').style.display = fullscreen ? 'none' : 'block';
+  $('icExitFullscreen').style.display = fullscreen ? 'block' : 'none';
+  $('btnFullscreen').title = fullscreen ? '退出全屏 (F)' : '进入全屏 (F)';
+  $('btnFullscreen').setAttribute('aria-label', fullscreen ? '退出全屏' : '进入全屏');
+}
+async function toggleFullscreen(){
+  try{
+    if(document.fullscreenElement || document.webkitFullscreenElement){
+      if(document.exitFullscreen) await document.exitFullscreen();
+      else if(document.webkitExitFullscreen) document.webkitExitFullscreen();
+      return;
+    }
+    if(document.documentElement.requestFullscreen) await document.documentElement.requestFullscreen();
+    else if(document.documentElement.webkitRequestFullscreen) document.documentElement.webkitRequestFullscreen();
+    else setStatus('当前浏览器不支持全屏播放');
+  }catch(e){
+    setStatus('无法进入全屏播放');
+  }
+}
+document.addEventListener('fullscreenchange', ()=>{
+  updateFullscreenButton();
+  requestAnimationFrame(()=>{
+    if(S.hasVideo) fitStage(video.videoWidth/video.videoHeight);
+    else fitStage(16/9);
+    draw();
+  });
+});
+document.addEventListener('webkitfullscreenchange', updateFullscreenButton);
+updateFullscreenButton();
 
 /* ---------------- 仪表布局拖动 ---------------- */
 function layoutCanvasPoint(e){
@@ -1546,6 +1640,7 @@ canvas.addEventListener('pointerdown', e=>{
 window.addEventListener('keydown', e=>{
   if(e.target.tagName==='INPUT'||e.target.tagName==='SELECT') return;
   if(e.code==='Space'){ e.preventDefault(); togglePlay(); }
+  if(e.code==='KeyF'){ e.preventDefault(); toggleFullscreen(); }
   if(e.code==='ArrowLeft') seekTo(currentT()-5);
   if(e.code==='ArrowRight') seekTo(currentT()+5);
 });
@@ -1570,8 +1665,13 @@ window.addEventListener('drop', e=>{
 (function(){
   const q = new URLSearchParams(location.search);
   const v = q.get('video'), d = q.get('data');
-  if(v){ video.src = v; video.load(); empty.classList.add('dimmed'); S.hasVideo=true; video.addEventListener('loadedmetadata',()=>fitStage(video.videoWidth/video.videoHeight)); }
+  if(v){
+    video.src = v; video.load(); empty.classList.add('dimmed'); S.hasVideo=true;
+    video.addEventListener('loadedmetadata',()=>fitStage(video.videoWidth/video.videoHeight));
+  }
   if(d) loadDataFromUrl(d);
+  else if(v) autoLoadDataForVideoUrl(v).then(loaded=>{ if(!loaded) loadDataFromUrl(DEFAULT_DATA_URL); });
+  else loadDataFromUrl(DEFAULT_DATA_URL);
   const off = q.get('offset');
   if(off !== null){ S.offset = parseFloat(off) || 0; }
   const offFile = q.get('offsetFile');
